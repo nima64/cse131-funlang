@@ -445,7 +445,7 @@ fn compile_expr_define_env(
 }
 
 pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> Vec<Instr> {
-    use crate::typechecker::annotate_any;
+    use crate::typechecker::type_check;
 
     let base_input_slot = 16;
     let mut env = HashMap::new();
@@ -477,7 +477,9 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
 
     instrs.push(Instr::Label("main_start".to_string()));
 
-    let main_t = annotate_any(&prog.main);
+    let mut env_t = HashMap::new();
+    env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
+    let main_t = type_check(&prog.main, &env_t);
     let body_instrs = compile_expr_define_env(
         &main_t,
         base_input_slot + 8,
@@ -507,7 +509,7 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
 
 // TODO every function have create a new env?
 fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
-    use crate::typechecker::annotate_any;
+    use crate::typechecker::type_check;
 
     let mut current_depth = 8;
     let mut max_depth = current_depth;
@@ -516,7 +518,7 @@ fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
     // assume args are already allocated
     // Arguments are at positive offsets from rbp
     let num_params = defn.params.len();
-    for (i, arg_name) in defn.params.iter().enumerate() {
+    for (i, (arg_name, _type)) in defn.params.iter().enumerate() {
         // 8 +  for intial ret addr put on stack by call
         let offset = 8 + ((num_params - i) * 8);
 
@@ -526,7 +528,13 @@ fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
     // Update context with function's env
     ctx.env = env;
 
-    let body_t = annotate_any(&defn.body);
+    // Create type environment for type checking
+    let mut env_t = HashMap::new();
+    for (param_name, param_type) in &defn.params {
+        let type_info = param_type.clone().unwrap_or(TypeInfo::Any);
+        env_t.insert(param_name.clone(), Box::new(type_info));
+    }
+    let body_t = type_check(&defn.body, &env_t);
     let body_instrs = compile_expr_define_env(
         &body_t,
         current_depth,
@@ -548,7 +556,7 @@ fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
 }
 
 pub fn compile_expr(e: &Expr) -> Vec<Instr> {
-    use crate::typechecker::annotate_any;
+    use crate::typechecker::type_check;
 
     let base_input_slot = 16; // makespace for rdi
     let mut env = HashMap::new();
@@ -568,7 +576,9 @@ pub fn compile_expr(e: &Expr) -> Vec<Instr> {
         env: env.clone(),
     };
 
-    let expr_t = annotate_any(e);
+    let mut env_t = HashMap::new();
+    env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
+    let expr_t = type_check(e, &env_t);
     let body_instrs = compile_expr_define_env(
         &expr_t,
         base_input_slot + 8,

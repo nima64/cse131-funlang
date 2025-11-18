@@ -1,6 +1,65 @@
 use crate::types::*;
 use im::HashMap;
 
+pub fn type_check_prog(prog: &Prog) -> Result<TypeInfo, String> {
+    // Type check all function definitions
+    for defn in &prog.defns {
+        type_check_defn(defn)?;
+    }
+
+    // Type check the main expression with empty environment (functions are not in scope as values)
+    let mut env_t = HashMap::new();
+    env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
+
+    let main_t = type_check(&prog.main, &env_t);
+    Ok(main_t.get_type_info().clone())
+}
+
+pub fn type_check_defn(defn: &Defn) -> Result<(), String> {
+    let mut env_t = HashMap::new();
+
+    // Check if function is annotated or un-annotated
+    let is_annotated = defn.return_type.is_some() || defn.params.iter().any(|(_, t)| t.is_some());
+
+    if is_annotated {
+        // Annotated function: check that all parameters have types and return type is specified
+        if defn.return_type.is_none() {
+            return Err(format!("Type error: Function {} has typed parameters but no return type", defn.name));
+        }
+
+        let expected_return_type = defn.return_type.as_ref().unwrap();
+
+        // Build environment with parameter types
+        for (param_name, param_type_opt) in &defn.params {
+            let param_type = param_type_opt.clone().unwrap_or(TypeInfo::Any);
+            env_t.insert(param_name.clone(), Box::new(param_type));
+        }
+
+        // Type check the body
+        let body_t = type_check(&defn.body, &env_t);
+        let body_type = body_t.get_type_info();
+
+        // Check that body type is a subtype of expected return type
+        if !is_subtype(body_type, expected_return_type) {
+            return Err(format!(
+                "Type error: Function {} body has type {:?}, expected {:?}",
+                defn.name, body_type, expected_return_type
+            ));
+        }
+    } else {
+        // Un-annotated function: all parameters are Any, body must be Any
+        for (param_name, _) in &defn.params {
+            env_t.insert(param_name.clone(), Box::new(TypeInfo::Any));
+        }
+
+        // Type check the body - it can have any type for un-annotated functions
+        // We still type-check to catch errors but don't enforce Any
+        let _body_t = type_check(&defn.body, &env_t);
+    }
+
+    Ok(())
+}
+
 pub fn annotate_any(expr: &Expr) -> ExprT {
     match expr {
         Expr::Number(n) => ExprT::Number(*n, TypeInfo::Any),
@@ -176,7 +235,7 @@ pub fn type_check(expr: &Expr, env_t:&HashMap<String, Box<TypeInfo>>) -> ExprT {
         }
         Expr::Break(expr) => {
             let expr_t = type_check(expr, env_t);
-            ExprT::Break(Box::new(expr_t), TypeInfo::Any)
+            ExprT::Break(Box::new(expr_t), TypeInfo::Nothing)
         }
         Expr::Set(name, expr) => {
             // Check if the variable exists in the environment

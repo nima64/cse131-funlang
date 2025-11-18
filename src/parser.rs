@@ -141,38 +141,113 @@ pub fn parse_expr(s: &Sexp) -> Expr {
 
 pub fn parse_defn(s: &Sexp) -> Defn {
     match s {
-        Sexp::List(vec) => match &vec[..] {
-            [Sexp::Atom(S(keyword)), Sexp::List(signature), body] if keyword == "fun" => {
-                match &signature[..] {
-                    [Sexp::Atom(S(name)), params @ ..] => {
-                        let param_names: Vec<String> = params
-                            .iter()
-                            .map(|p| match p {
-                                Sexp::Atom(S(param_name)) => param_name.to_string(),
-                                _ => panic!("Invalid: function parameter must be an identifier"),
-                            })
-                            .collect();
-                        let mut seen = HashSet::new();
-                        
-                        for p in &param_names {
-                            if !seen.insert(p) {
-                                panic!("Duplicate Argument");
+        Sexp::List(vec) => {
+            // Check for annotated function: (fun (name (param : Type) ...) -> RetType body)
+            // or un-annotated function: (fun (name param ...) body)
+            match &vec[..] {
+                [Sexp::Atom(S(keyword)), Sexp::List(signature), Sexp::Atom(S(arrow)), ret_type_sexp, body]
+                    if keyword == "fun" && arrow == "->" => {
+                    // Annotated function with return type
+                    match &signature[..] {
+                        [Sexp::Atom(S(name)), params @ ..] => {
+                            let parsed_params = parse_typed_params(params);
+                            let ret_type = parse_type(ret_type_sexp);
+
+                            Defn {
+                                name: name.to_string(),
+                                params: parsed_params,
+                                return_type: Some(ret_type),
+                                body: Box::new(parse_expr(body)),
                             }
                         }
-
-                        Defn {
-                            name: name.to_string(),
-                            params: param_names,
-                            body: Box::new(parse_expr(body)),
-                        }
+                        _ => panic!("Invalid: function definition must have a name"),
                     }
-                    _ => panic!("Invalid: function definition must have a name"),
                 }
+                [Sexp::Atom(S(keyword)), Sexp::List(signature), body] if keyword == "fun" => {
+                    // Un-annotated function or partially annotated
+                    match &signature[..] {
+                        [Sexp::Atom(S(name)), params @ ..] => {
+                            let parsed_params = parse_params(params);
+
+                            Defn {
+                                name: name.to_string(),
+                                params: parsed_params,
+                                return_type: None,
+                                body: Box::new(parse_expr(body)),
+                            }
+                        }
+                        _ => panic!("Invalid: function definition must have a name"),
+                    }
+                }
+                _ => panic!("Invalid: expected function definition (fun ...)"),
             }
-            _ => panic!("Invalid: expected function definition (fun ...)"),
-        },
+        }
         _ => panic!("Invalid: function definition must be a list"),
     }
+}
+
+fn parse_type(s: &Sexp) -> TypeInfo {
+    match s {
+        Sexp::Atom(S(type_name)) => match type_name.as_str() {
+            "Num" => TypeInfo::Num,
+            "Bool" => TypeInfo::Bool,
+            "Nothing" => TypeInfo::Nothing,
+            "Any" => TypeInfo::Any,
+            _ => panic!("Invalid type: {}", type_name),
+        },
+        _ => panic!("Invalid: expected a type name"),
+    }
+}
+
+fn parse_params(params: &[Sexp]) -> Vec<(String, Option<TypeInfo>)> {
+    let mut result = Vec::new();
+    let mut seen = HashSet::new();
+
+    for param in params {
+        match param {
+            Sexp::Atom(S(param_name)) => {
+                // Un-annotated parameter
+                if !seen.insert(param_name.to_string()) {
+                    panic!("Duplicate Argument");
+                }
+                result.push((param_name.to_string(), None));
+            }
+            _ => panic!("Invalid: function parameter must be an identifier"),
+        }
+    }
+
+    result
+}
+
+fn parse_typed_params(params: &[Sexp]) -> Vec<(String, Option<TypeInfo>)> {
+    let mut result = Vec::new();
+    let mut seen = HashSet::new();
+
+    for param in params {
+        match param {
+            Sexp::List(param_parts) => match &param_parts[..] {
+                [Sexp::Atom(S(param_name)), Sexp::Atom(S(colon)), type_sexp] if colon == ":" => {
+                    // Annotated parameter: (x : Type)
+                    if !seen.insert(param_name.to_string()) {
+                        panic!("Duplicate Argument");
+                    }
+                    let param_type = parse_type(type_sexp);
+                    result.push((param_name.to_string(), Some(param_type)));
+                }
+                _ => panic!("Invalid: expected (param : Type)"),
+            },
+            Sexp::Atom(S(param_name)) => {
+                // Un-annotated parameter in annotated function
+                if !seen.insert(param_name.to_string()) {
+                    panic!("Duplicate Argument");
+                }
+                result.push((param_name.to_string(), None));
+            }
+            _ => panic!("Invalid: function parameter format"),
+        }
+    }
+
+    result
 }
 
 pub fn parse_prog(s: &Sexp) -> Prog {

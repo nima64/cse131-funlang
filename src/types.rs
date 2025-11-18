@@ -1,10 +1,10 @@
 /** Type Checker **/ 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TypeInfo{
-    Num, 
-    Bool, 
-    Nothing, 
+    Num,
+    Bool,
+    Nothing,
     Any
 }
 
@@ -125,14 +125,14 @@ pub enum Expr {
     FunCall(String, Vec<Expr>),
     Print(Box<Expr>),
     Cast(TypeInfo, Box<Expr>)
-    // FunDef(String, Vec<String>, Box<Expr>), //NEED TO ADD
 
 }
 
 #[derive(Debug, Clone)]
 pub struct Defn {
     pub name: String,
-    pub params: Vec<String>,
+    pub params: Vec<(String, Option<TypeInfo>)>, // (name, optional type annotation)
+    pub return_type: Option<TypeInfo>, // optional return type annotation
     pub body: Box<Expr>,
 }
 

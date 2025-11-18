@@ -1,0 +1,4 @@
+; No type errors, produces 25:
+(fun (f (x : Num) (y : Num)) -> Num
+  (+ (* x x) (* y y)))
+(f 3 4)

@@ -1,0 +1,1 @@
+(loop (let ((x 100)) (if (> (cast Num input) x) (break x) (break 100))))
