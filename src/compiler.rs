@@ -482,7 +482,7 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
 }
 
 // TODO every function have create a new env?
-pub fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
+fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
     let mut current_depth = 8;
     let mut max_depth = current_depth;
     let mut env = HashMap::new();

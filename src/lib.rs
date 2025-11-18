@@ -2,6 +2,7 @@
 
 pub mod common;
 pub mod types;
+mod typechecker;
 
 // Re-export all items from common (no external dependencies)
 pub use common::*;

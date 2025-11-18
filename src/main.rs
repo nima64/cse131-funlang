@@ -3,6 +3,7 @@ mod assembly;
 mod parser;
 mod common;
 mod types;
+mod typechecker;
 
 use assembly::*;
 use compiler::*;
@@ -14,9 +15,9 @@ use std::env;
 use std::fs::File;
 use std::io;
 use std::io::*;
-use std::panic;
 use im::HashMap;
 
+use crate::typechecker::type_check;
 use crate::types::Prog;
 
 
@@ -46,6 +47,10 @@ fn run_aot(in_name: &str, out_name: &str) -> std::io::Result<()> {
 
     let sexpr = parse(&in_contents).unwrap();
     let prog = parse_prog(&sexpr);
+    
+    let progTyped = type_check(&prog.main, &HashMap::new());
+    println!("typed program body {:?}", progTyped);
+
     let instrs = compile_prog(&prog, &mut HashMap::new());
     let result = instrs_to_string(&instrs);
 
