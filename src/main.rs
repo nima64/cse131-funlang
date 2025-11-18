@@ -49,7 +49,7 @@ fn run_aot(in_name: &str, out_name: &str) -> std::io::Result<()> {
     let prog = parse_prog(&sexpr);
     
     let progTyped = type_check(&prog.main, &HashMap::new());
-    println!("typed program body {:?}", progTyped);
+    // println!("typed program body {:?}", progTyped);
 
     let instrs = compile_prog(&prog, &mut HashMap::new());
     let result = instrs_to_string(&instrs);
@@ -71,6 +71,9 @@ type_mismatch_error:
   jmp error_common
 type_error_arithmetic:
   mov rdi, 3
+  jmp error_common
+bad_cast_error:
+  mov rdi, 4
 error_common:
   call snek_error
   jmp done
