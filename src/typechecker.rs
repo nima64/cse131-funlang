@@ -1,6 +1,54 @@
 use crate::types::*;
 use im::HashMap;
-use prettydiff::format_table::new;
+
+pub fn annotate_any(expr: &Expr) -> ExprT {
+    match expr {
+        Expr::Number(n) => ExprT::Number(*n, TypeInfo::Any),
+        Expr::Boolean(b) => ExprT::Boolean(*b, TypeInfo::Any),
+        Expr::Id(name) => ExprT::Id(name.clone(), TypeInfo::Any),
+        Expr::UnOp(op, subexpr) => {
+            ExprT::UnOp(op.clone(), Box::new(annotate_any(subexpr)), TypeInfo::Any)
+        }
+        Expr::BinOp(op, e1, e2) => {
+            ExprT::BinOp(op.clone(), Box::new(annotate_any(e1)), Box::new(annotate_any(e2)), TypeInfo::Any)
+        }
+        Expr::Let(bindings, body) => {
+            let t_bindings = bindings.iter()
+                .map(|(name, expr)| (name.clone(), annotate_any(expr)))
+                .collect();
+            ExprT::Let(t_bindings, Box::new(annotate_any(body)), TypeInfo::Any)
+        }
+        Expr::Define(name, expr) => {
+            ExprT::Define(name.clone(), Box::new(annotate_any(expr)), TypeInfo::Any)
+        }
+        Expr::Block(exprs) => {
+            let exprs_t = exprs.iter().map(|e| annotate_any(e)).collect();
+            ExprT::Block(exprs_t, TypeInfo::Any)
+        }
+        Expr::If(cond, then_expr, else_expr) => {
+            ExprT::If(Box::new(annotate_any(cond)), Box::new(annotate_any(then_expr)), Box::new(annotate_any(else_expr)), TypeInfo::Any)
+        }
+        Expr::Loop(body) => {
+            ExprT::Loop(Box::new(annotate_any(body)), TypeInfo::Any)
+        }
+        Expr::Break(expr) => {
+            ExprT::Break(Box::new(annotate_any(expr)), TypeInfo::Any)
+        }
+        Expr::Set(name, expr) => {
+            ExprT::Set(name.clone(), Box::new(annotate_any(expr)), TypeInfo::Any)
+        }
+        Expr::FunCall(name, args) => {
+            let args_t = args.iter().map(|e| annotate_any(e)).collect();
+            ExprT::FunCall(name.clone(), args_t, TypeInfo::Any)
+        }
+        Expr::Print(expr) => {
+            ExprT::Print(Box::new(annotate_any(expr)), TypeInfo::Any)
+        }
+        Expr::Cast(target_type, expr) => {
+            ExprT::Cast(target_type.clone(), Box::new(annotate_any(expr)), TypeInfo::Any)
+        }
+    }
+}
 
 pub fn union_type(t1: &TypeInfo, t2: &TypeInfo) -> TypeInfo {
     use TypeInfo::*;
