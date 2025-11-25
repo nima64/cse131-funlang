@@ -428,7 +428,7 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
     let mut env_t = HashMap::new();
     env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
     let main_t = type_check(&prog.main, &env_t);            // TODO: ASK ABOUT TYPE CHECKING
-    let optimized_main = optimize(&main_t);
+    let optimized_main = optimize(&main_t, HashMap::new());
     let body_instrs = compile_expr_define_env(
         &optimized_main,
         base_input_slot + 8,
@@ -484,7 +484,7 @@ fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
         env_t.insert(param_name.clone(), Box::new(type_info));
     }
     let body_t = type_check(&defn.body, &env_t);
-    let optimized_body = optimize(&body_t);
+    let optimized_body = optimize(&body_t, HashMap::new());
     let body_instrs = compile_expr_define_env(
         &optimized_body,
         current_depth,
