@@ -9,7 +9,7 @@ use std::rc::Rc;
 use crate::assembly::*;
 use crate::common::*;
 use crate::types::*;
-
+use crate::optimizer::*;
 #[derive(Clone)]
 struct CompileCtx {
     loop_depth: i32,
@@ -47,9 +47,8 @@ fn compile_expr_define_env(
             shared.max_depth = stack_depth;
         }
     }
-
     match e {
-        ExprT::Number(n, _) => vec![Instr::Mov(Reg::Rax, *n)],
+        ExprT::Number(n, _) => vec![Instr::Mov(Reg::Rax, tag_number(*n))],
         ExprT::Boolean(b, _) => vec![Instr::Mov(Reg::Rax, if *b {TRUE_TAGGED} else {FALSE_TAGGED})],
         ExprT::Id(name, _) => {
             // Check env (stack) first for local variables
@@ -429,8 +428,9 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
     let mut env_t = HashMap::new();
     env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
     let main_t = type_check(&prog.main, &env_t);            // TODO: ASK ABOUT TYPE CHECKING
+    let optimized_main = optimize(&main_t);
     let body_instrs = compile_expr_define_env(
-        &main_t,
+        &optimized_main,
         base_input_slot + 8,
         ctx.clone(),
     );
@@ -484,8 +484,9 @@ fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
         env_t.insert(param_name.clone(), Box::new(type_info));
     }
     let body_t = type_check(&defn.body, &env_t);
+    let optimized_body = optimize(&body_t);
     let body_instrs = compile_expr_define_env(
-        &body_t,
+        &optimized_body,
         current_depth,
         ctx.clone(),
     );

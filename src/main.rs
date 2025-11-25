@@ -4,6 +4,7 @@ mod parser;
 mod common;
 mod types;
 mod typechecker;
+mod optimizer;
 
 use assembly::*;
 use compiler::*;

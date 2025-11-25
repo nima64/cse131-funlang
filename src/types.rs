@@ -22,7 +22,7 @@ pub fn is_subtype(t1: &TypeInfo, t2: &TypeInfo) -> bool {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExprT {
     Number(i64, TypeInfo),
     Boolean(bool, TypeInfo),

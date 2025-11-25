@@ -14,6 +14,8 @@ export RUST_BACKTRACE=full
 # RUST_TARGET := x86_64-apple-darwin
 # endif
 
+.PRECIOUS: tests/%.s
+
 target/$(RUST_TARGET)/debug/libadder.rlib: src/lib.rs src/types.rs src/assembly.rs src/common.rs
 	cargo build --target $(RUST_TARGET) --lib
 

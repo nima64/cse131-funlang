@@ -4,7 +4,6 @@
 pub const TRUE_TAGGED: i64 = 3;
 pub const FALSE_TAGGED: i64 = 1;
 pub const BOOL_TAG: i64 = 1;
-pub const NUM_TAG: i64 = 0;
 
 pub fn get_tag(n: i64) -> i64 {
     n & 1
