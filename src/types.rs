@@ -103,7 +103,7 @@ pub enum Op2 {
 
 // Re-export constants from common module
 pub use crate::common::{
-    TRUE_TAGGED, FALSE_TAGGED, BOOL_TAG, NUM_TAG,
+    TRUE_TAGGED, FALSE_TAGGED, BOOL_TAG, 
     get_tag, tag_number, untag_number, format_result, parse_input,
 };
 
@@ -175,6 +175,7 @@ impl ToString for RuntimeErr {
 #[derive(Debug, Clone)]
 pub enum Instr {
     // IMov(Reg, RegOrImm),
+    Comment(String),
     Mov(Reg, i64), // mov register, immediate
     Add(Reg, i32), // add register, immediate
     Sub(Reg, i32), // sub register, immediate

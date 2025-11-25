@@ -4,6 +4,7 @@ use im::HashMap;
 
 pub fn instr_to_string(instr: &Instr) -> String {
     match instr {
+        Instr::Comment(comment_text) => format!("; {}", comment_text),
         Instr::Mov(reg, val) => format!("mov {}, {}", reg_to_string(reg), val),
         Instr::Add(reg, val) => format!("add {}, {}", reg_to_string(reg), val),
         Instr::Sub(reg, val) => format!("sub {}, {}", reg_to_string(reg), val),
@@ -154,6 +155,7 @@ pub fn instr_to_asm(
     labels: &HashMap<String, DynamicLabel>,
 ) {
     match i {
+        Instr::Comment(_) => {}
         Instr::Mov(reg, val) => {
             let r: u8 = reg.to_num();
             dynasm!(ops; .arch x64; mov Rq(r), QWORD *val);

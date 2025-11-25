@@ -48,7 +48,7 @@ fn run_aot(in_name: &str, out_name: &str) -> std::io::Result<()> {
     let sexpr = parse(&in_contents).unwrap();
     let prog = parse_prog(&sexpr);
     
-    let progTyped = type_check(&prog.main, &HashMap::new());
+    let prog_typed = type_check(&prog.main, &HashMap::new());
     // println!("typed program body {:?}", progTyped);
 
     let instrs = compile_prog(&prog, &mut HashMap::new());
