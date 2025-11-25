@@ -479,7 +479,7 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
 
     let mut env_t = HashMap::new();
     env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
-    let main_t = type_check(&prog.main, &env_t);
+    let main_t = type_check(&prog.main, &env_t);            // TODO: ASK ABOUT TYPE CHECKING
     let body_instrs = compile_expr_define_env(
         &main_t,
         base_input_slot + 8,
@@ -552,54 +552,6 @@ fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
     instrs.push(Instr::MovReg(Reg::Rsp, Reg::Rbp));
     instrs.push(Instr::Pop(Reg::Rbp));
 
-    instrs
-}
-
-pub fn compile_expr(e: &Expr) -> Vec<Instr> {
-    use crate::typechecker::type_check;
-
-    let base_input_slot = 16; // makespace for rdi
-    let mut env = HashMap::new();
-    env.insert("input".to_string(), base_input_slot);
-
-    let shared_ctx = Rc::new(RefCell::new(SharedCompileCtx {
-        label_counter: 0,
-        max_depth: base_input_slot,
-        define_env: HashMap::new(),
-    }));
-
-    let mut ctx = CompileCtx {
-        loop_depth: 0,
-        current_loop_id: -1,
-        shared_ctx: shared_ctx.clone(),
-        defns: Rc::new(vec![]),
-        env: env.clone(),
-    };
-
-    let mut env_t = HashMap::new();
-    env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
-    let expr_t = type_check(e, &env_t);
-    let body_instrs = compile_expr_define_env(
-        &expr_t,
-        base_input_slot + 8,
-        ctx.clone(),
-    );
-
-    let max_depth = shared_ctx.borrow().max_depth;
-    let frame_size: i32 = ((max_depth + 15) / 16) * 16; //rounds to the mutiple of 16
-
-    let mut instrs = Vec::new();
-    instrs.push(Instr::Push(Reg::Rbp));
-    instrs.push(Instr::MovReg(Reg::Rbp, Reg::Rsp));
-    instrs.push(Instr::Sub(Reg::Rsp, frame_size)); // sub rsp, frame_size (16-byte aligned)
-
-    instrs.push(Instr::MovToStack(Reg::Rdi, base_input_slot));
-
-    instrs.extend(body_instrs);
-
-    // Epilogue
-    instrs.push(Instr::MovReg(Reg::Rsp, Reg::Rbp));
-    instrs.push(Instr::Pop(Reg::Rbp));
     instrs
 }
 
