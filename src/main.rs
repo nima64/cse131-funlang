@@ -4,6 +4,7 @@ mod parser;
 mod common;
 mod types;
 mod typechecker;
+mod compile_me;
 
 use assembly::*;
 use compiler::*;
@@ -54,39 +55,47 @@ fn run_aot(in_name: &str, out_name: &str) -> std::io::Result<()> {
     let instrs = compile_prog(&prog, &mut HashMap::new());
     let result = instrs_to_string(&instrs);
 
-    let asm_program = format!(
-        "
+        let asm_program = format!(
+                "
 section .text
 extern snek_error
 extern print_fun
+extern compile_me
 global our_code_starts_here
 our_code_starts_here:
 {}
-  jmp done
+    jmp done
 overflow_error:
-  mov rdi, 2
-  jmp error_common
+    mov rdi, 2
+    jmp error_common
 type_mismatch_error:
-  mov rdi, 1
-  jmp error_common
+    mov rdi, 1
+    jmp error_common
 type_error_arithmetic:
-  mov rdi, 3
-  jmp error_common
+    mov rdi, 3
+    jmp error_common
 bad_cast_error:
-  mov rdi, 4
+    mov rdi, 4
 error_common:
-  call snek_error
-  jmp done
+    call snek_error
+    jmp done
 print_fun_external:
-  sub rsp, 8 ; alignment for 16 bytes to prevent segfaulting
-  call print_fun
-  add rsp, 8
-  ret
+    sub rsp, 8 ; alignment for 16 bytes to prevent segfaulting
+    call print_fun
+    add rsp, 8
+    ret
+compile_me_external:
+    ; AOT wrapper that forwards to the external `compile_me` stub
+    sub rsp, 8
+    mov rdi, rdi
+    call compile_me
+    add rsp, 8
+    ret
 done:
-  ret
-            ",
-        result
-    );
+    ret
+                        ",
+                result
+        );
 
     let mut out_file = File::create(out_name)?;
     out_file.write_all(asm_program.as_bytes())?;

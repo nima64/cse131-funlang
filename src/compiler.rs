@@ -9,6 +9,7 @@ use std::rc::Rc;
 use crate::assembly::*;
 use crate::common::*;
 use crate::types::*;
+use crate::compile_me::*;
 
 #[derive(Clone)]
 struct CompileCtx {
@@ -495,6 +496,10 @@ fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
     instrs.push(Instr::MovReg(Reg::Rbp, Reg::Rsp));
     instrs.push(Instr::Sub(Reg::Rsp, max_depth));
 
+    let fn_id = record_function(defn);
+    instrs.push(Instr::Mov(Reg::Rdi, fn_id as i64));
+    instrs.push(Instr::Call("compile_me_external".to_string()));
+
     instrs.extend(body_instrs);
 
     // Epilogue
@@ -517,16 +522,20 @@ pub fn jit_code_input(instrs: &Vec<Instr>, input: i64) -> i64 {
     let error_bad_cast = ops.new_dynamic_label();
     let error_common = ops.new_dynamic_label();
     let print_fun_external = ops.new_dynamic_label();
+    let compile_me_external = ops.new_dynamic_label();
 
     labels.insert("type_mismatch_error".to_string(), error_type_mismatch);
     labels.insert("overflow_error".to_string(), error_overflow);
     labels.insert("type_error_arithmetic".to_string(), error_arithmetic);
     labels.insert("bad_cast_error".to_string(), error_bad_cast);
     labels.insert("print_fun_external".to_string(), print_fun_external);
+    labels.insert("compile_me_external".to_string(), compile_me_external);
     let c_func_ptr: extern "C" fn(i64) -> i64 =
         unsafe { mem::transmute(snek_error as *const ()) };
     let print_func_ptr: extern "C" fn(i64) -> i64 =
         unsafe { mem::transmute(print_fun as *const ()) };
+    let compile_me_ptr: extern "C" fn(u64) -> i32 =
+        unsafe { mem::transmute(crate::compile_me::compile_me as *const ()) };
 
     // Pre-create all labels
     for instr in instrs {
@@ -559,6 +568,12 @@ pub fn jit_code_input(instrs: &Vec<Instr>, input: i64) -> i64 {
         ; =>print_fun_external
         ; sub rsp, 8
         ; mov rax, QWORD print_func_ptr as i64
+        ; call rax
+        ; add rsp, 8
+        ; ret
+        ; =>compile_me_external
+        ; sub rsp, 8
+        ; mov rax, QWORD compile_me_ptr as i64
         ; call rax
         ; add rsp, 8
         ; ret

@@ -26,6 +26,11 @@ pub extern "C" fn print_fun_wrapper(val: i64) {
     print_fun(val);
 }
 
+#[export_name = "\x01compile_me"]
+pub extern "C" fn compile_me_stub(_id: u64) -> i32 {
+    0
+}
+
 fn main() {
   let args: Vec<String> = env::args().collect();
   let input = if args.len() == 2 { &args[1]} else { "false"};
