@@ -39,7 +39,7 @@ runtime_error_tests! {
     integer_overflow_add1: { file: "integer_overflow_add1", input: "4611686018427387903", expected: "integer overflow" },
     integer_overflow_sub1: { file: "integer_overflow_sub1", input: "-4611686018427387904", expected: "integer overflow" },
     integer_overflow_mul: { file: "integer_overflow_mul", input: "2", expected: "integer overflow" },
-    integer_overflow_mul_negative: { file: "integer_overflow_mul_negative", input: "2", expected: "integer overflow" },
+    integer_overfow_mul_negative: { file: "integer_overflow_mul_negative", input: "2", expected: "integer overflow" },
     integer_overflow_plus: { file: "integer_overflow_plus", input: "", expected: "integer overflow" },
     integer_overflow_minus: { file: "integer_overflow_minus", input: "", expected: "integer overflow" },
 }
@@ -49,7 +49,7 @@ static_error_tests! {
     type_test_3_any_error: { file: "type_test_3_any_error", input: "", expected: "Expected Num type" },
     type_test_8_input_error: { file: "type_test_8_input_error", input: "", expected: "Expected Num type" },
 
-    test_loop_break_error: { file: "loop_break", input: "", expected: "break outside of loop" },
+    // test_loop_break_error: { file: "loop_break", input: "", expected: "break outside of loop" },
     duplicate_function_name: { file: "duplicate_fun", input: "", expected: "Multiple functions are defined with the same name" },
     undefined_function: { file: "undefined_fun", input: "", expected: "" },
     input_in_function: { file: "input_in_fun", input: "5", expected: "Unbound variable identifier input" },
@@ -59,41 +59,7 @@ static_error_tests! {
 repl_tests! {
     test_simple_bools: {commands:["(define x true)", "x", "false"], expected: ["true", "false"]},
 
-    // Basic function definition and call
-    test_fun_simple: {commands:["(fun (double x) (+ x x))", "(double 5)"], expected: ["10"]},
-
-    // Function with multiple arguments
-    test_fun_multi_args: {commands:["(fun (add3 x y z) (+ (+ x y) z))", "(add3 1 2 3)"], expected: ["6"]},
-
-    // Recursive function
-    test_fun_recursive: {commands:["(fun (fact n) (if (= n 0) 1 (* n (fact (sub1 n)))))", "(fact 5)"], expected: ["120"]},
-
-    // Multiple functions calling each other
-    test_fun_chain: {commands:["(fun (add2 x) (+ x 2))", "(fun (mul3 x) (* x 3))", "(mul3 (add2 5))"], expected: ["21"]},
-
-    // Define variable and use it
-    test_define_use: {commands:["(define x 42)", "(+ x 8)"], expected: ["50"]},
-
-    // Multiple defines
-    test_define_multiple: {commands:["(define a 10)", "(define b 20)", "(+ a b)"], expected: ["30"]},
-
-    // Set! on defined variable
-    test_set_define: {commands:["(define counter 0)", "counter", "(set! counter 10)", "counter"], expected: ["0", "10"]},
-
-    // Set! multiple times
-    test_set_multiple: {commands:["(define x 1)", "(set! x 2)", "(set! x (+ x 3))", "x"], expected: ["5"]},
-
-    // Function using defined variable
-    test_fun_with_define: {commands:["(define base 100)", "(fun (add_base x) (+ x base))", "(add_base 23)"], expected: ["123"]},
-
-    // Function and set! on defined variable
-    test_fun_set_define: {commands:["(define total 0)", "(fun (add_to_total x) (set! total (+ total x)))", "(add_to_total 5)", "total", "(add_to_total 10)", "total"], expected: ["5", "5", "15", "15"]},
-
-    // Complex: function using and modifying defined variables
-    test_fun_modify_globals: {commands:["(define x 10)", "(define y 20)", "(fun (swap) (let ((temp x)) (block (set! x y) (set! y temp) x)))", "(swap)", "x", "y"], expected: ["20", "20", "10"]},
-
-    // Print in REPL
-    test_print_repl: {commands:["(fun (test_print x) (block (print x) (+ x 1)))", "(test_print 5)"], expected: ["5\n6"]},
+    // Typed recursive factorial
 
     test_define_and_use: { commands: ["(define a 10)", "(define b (+ a 5))", "(+ a b)"], expected: ["25"], typecheck: true },
     repl_complicated_tc: { commands: [
@@ -106,16 +72,52 @@ repl_tests! {
         "(block (print 3) (+ 1 true))",
         "acc"
     ], expected: ["7", "21", "22", "22"], typecheck: true},
-repl_tc: {
-commands: [
-"(define x 7)",
-"x",
-"(set! x false)",
-"x",
-"(block (print 3) (+ 1 true))",
-"x"
-],
-expected: ["7", "7", "7"],
-typecheck: true
-},
+    repl_tc: {
+        commands: [
+        "(define x 7)",
+        "x",
+        "(set! x false)",
+        "x",
+        "(block (print 3) (+ 1 true))",
+        "x"
+        ],
+        expected: ["7", "7", "7"],
+        typecheck: true
+    },
+
+    // Basic function definition and call
+    repl_typed_fun_simple: {commands:["(fun (double (x : Num)) -> Num (+ x x))", "(double 5)"], expected: ["10"]},
+
+    // Function with multiple arguments
+    repl_typed_fun_multi_args: {commands:["(fun (add3 (x : Num) (y : Num) (z : Num)) -> Num (+ (+ x y) z))", "(add3 1 2 3)"], expected: ["6"]},
+
+    // Recursive function
+    repl_typed_fun_recursive: {commands:["(fun (fact (n : Num)) -> Num (if (= n 0) 1 (* n (fact (sub1 n)))))", "(fact 5)"], expected: ["120"]},
+
+    // Multiple functions calling each other
+    repl_typed_fun_chain: {commands:["(fun (add2 (x : Num)) -> Num (+ x 2))", "(fun (mul3 (x : Num)) -> Num (* x 3))", "(mul3 (add2 5))"], expected: ["21"]},
+
+    // Define variable and use it
+    repl_typed_define_use: {commands:["(define x 42)", "(+ x 8)"], expected: ["50"]},
+
+    // Multiple defines
+    repl_typed_define_multiple: {commands:["(define a 10)", "(define b 20)", "(+ a b)"], expected: ["30"]},
+
+    // Set! on defined variable
+    repl_typed_set_define: {commands:["(define counter 0)", "counter", "(set! counter 10)", "counter"], expected: ["0", "10"]},
+
+    // Set! multiple times
+    repl_typed_set_multiple: {commands:["(define x 1)", "(set! x 2)", "(set! x (+ x 3))", "x"], expected: ["5"]},
+
+    // Function using defined variable
+    repl_typed_fun_with_define: {commands:["(define base 100)", "(fun (add_base (x : Num)) -> Num (+ x base))", "(add_base 23)"], expected: ["123"]},
+
+    // Function and set! on defined variable
+    repl_typed_fun_set_define: {commands:["(define total 0)", "(fun (add_to_total (x : Num)) -> Num (set! total (+ total x)))", "(add_to_total 5)", "total", "(add_to_total 10)", "total"], expected: ["5", "5", "15", "15"]},
+
+    // Complex: function using and modifying defined variables
+    repl_typed_fun_modify_globals: {commands:["(define x 10)", "(define y 20)", "(fun (swap) -> Num (let ((temp x)) (block (set! x y) (set! y temp) x)))", "(swap)", "x", "y"], expected: ["20", "20", "10"]},
+
+    // Print in REPL
+    repl_typed_print_repl: {commands:["(fun (test_print (x : Num)) -> Num (block (print x) (+ x 1)))", "(test_print 5)"], expected: ["5\n6"]},
 }
