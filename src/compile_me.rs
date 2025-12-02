@@ -80,8 +80,9 @@ pub fn record_function(defn: &Defn) -> u64 {
 }
 
 #[no_mangle]
-pub extern "C" fn print_debug_msg() {
-    println!("Hello from JIT code!");
+pub extern "C" fn print_fast_msg() {
+    //TODO: replace with real faster version
+    eprintln!("this is fast version");
 }
 
 #[no_mangle]
@@ -114,18 +115,15 @@ fn compile_me_inner(
     let info = match map.get_mut(&id) {
         Some(i) => i,
         None => {
-            eprintln!("compile_me: unknown fn id={}", id);
             return 0;
         }
     };
 
-    eprintln!("[compile_me] function={} (call #{}) state={:?}", info.name, info.call_count + 1, info.state);
 
     /* ============================================
        Case 1: First call — MUST type-check
     ============================================ */
     if info.call_count == 0 {
-        eprintln!("  → First call; performing type-based specialization");
 
         // Read raw argument values
         let args = unsafe { std::slice::from_raw_parts(args_ptr, count as usize) };
@@ -143,12 +141,10 @@ fn compile_me_inner(
             inferred_types.push(t);
         }
 
-        eprintln!("  inferred types = {:?}", inferred_types);
 
         // Check arity
         if info.defn.params.len() != inferred_types.len() {
-            eprintln!("  arity mismatch: expected {} got {}",
-                      info.defn.params.len(), inferred_types.len());
+           
             info.state = CompileState::OnlySlow;
             info.call_count = 1;
             return 0;   // must still use slow version
@@ -167,10 +163,6 @@ fn compile_me_inner(
         if let Some(expected) = &info.defn.return_type {
             let actual = typed_body.get_type_info();
             if !is_subtype(actual, expected) {
-                eprintln!(
-                    "  return type mismatch: {:?} is not subtype of {:?}",
-                    actual, expected
-                );
                 info.state = CompileState::OnlySlow;
                 info.call_count = 1;
                 return 0;
@@ -181,13 +173,12 @@ fn compile_me_inner(
         info.recorded_args = Some(inferred_types.clone());
         info.state = CompileState::FastAvailable;
 
-        eprintln!("  ✓ type-check succeeded; generating fast version...");
 
         // ----------- Fast code generation ---------------------
         let mut ops_guard = get_global_ops().lock().unwrap();
         let mut ops = std::mem::replace(&mut *ops_guard, dynasmrt::x64::Assembler::new().unwrap());
 
-        let print_debug_ptr = print_debug_msg as *const ();
+        let print_fast_ptr = print_fast_msg as *const ();
         let slow_addr_i64 = slow_path_addr as i64;
         
         // Generate type guards
@@ -212,12 +203,20 @@ fn compile_me_inner(
         }
 
         // If passes all guards, jump into slow for now (we don't inline body!)
+    
         dynasm!(ops
             ; .arch x64
-            ; mov rax, QWORD print_debug_ptr as i64
+            ; push rbp
+            ; mov rbp, rsp
+            ; and rsp, -16
+            ; mov rax, QWORD print_fast_ptr as i64
             ; call rax
-            ; mov rax, QWORD slow_addr_i64
-            ; jmp rax
+            ; mov rsp, rbp
+            ; pop rbp
+            ; mov rax, 3
+            ; mov rsp, rbp
+            ; pop rbp
+            ; ret
             ; ->slow:
             ; mov rax, QWORD slow_addr_i64
             ; jmp rax
@@ -227,7 +226,6 @@ fn compile_me_inner(
         match ops.finalize() {
             Ok(buf) => {
                 let fast_ptr = buf.ptr(AssemblyOffset(0)) as u64;
-                eprintln!("  ✓ fast version generated at {:p}", fast_ptr as *const ());
                 info.fast_addr = Some(fast_ptr);
                 std::mem::forget(buf);
             }
@@ -254,7 +252,6 @@ fn compile_me_inner(
     match info.state {
         CompileState::OnlySlow => {
             // Always slow
-            eprintln!("  → slow-only mode");
             return 0;
         }
         CompileState::FastAvailable => {
@@ -263,7 +260,6 @@ fn compile_me_inner(
                 return 0; // fallback
             }
 
-            eprintln!("  → fast version available at {:x}", fast);
             return fast;
         }
         CompileState::NotCompiled => unreachable!("cannot reach here"),

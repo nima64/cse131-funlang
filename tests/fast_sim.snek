@@ -1,0 +1,6 @@
+(fun (f x) (+ x 1))
+(block
+  (print (f 10))
+  (print (f 20))
+  (print (f 30))
+)
