@@ -188,6 +188,7 @@ fn compile_expr_define_env(
             let mut shared = ctx.shared_ctx.borrow_mut();
             if !shared.define_env.contains_key(name) {
                 shared.define_env.insert(name.clone(), boxed_val);
+                print!("inserted {}", name.clone());
             } else {
                 println!("Duplicate binding");
             }
@@ -393,7 +394,7 @@ fn compile_expr_define_env(
     }
 }
 
-pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> Vec<Instr> {
+pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>, define_env_t: &mut std::collections::HashMap<String, Box<TypeInfo>>) -> Vec<Instr> {
     use crate::typechecker::type_check;
 
     let base_input_slot = 16;
@@ -420,7 +421,7 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
 
     for defn in &prog.defns {
         instrs.push(Instr::Label(defn.name.clone()));
-        instrs.extend(compile_defn(defn, ctx.clone()));
+        instrs.extend(compile_defn(defn, ctx.clone(), define_env_t));
         instrs.push(Instr::Ret);
     }
 
@@ -428,7 +429,7 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
 
     let mut env_t = HashMap::new();
     env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
-    let main_t = type_check(&prog.main, &env_t);            // TODO: ASK ABOUT TYPE CHECKING
+    let main_t = type_check(&prog.main, &env_t, define_env_t, &prog.defns);            // TODO: ASK ABOUT TYPE CHECKING
     let body_instrs = compile_expr_define_env(
         &main_t,
         base_input_slot + 8,
@@ -457,7 +458,7 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>) -> 
 }
 
 // TODO every function have create a new env?
-fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
+fn compile_defn(defn: &Defn, mut ctx: CompileCtx, define_env_t: &mut std::collections::HashMap<String, Box<TypeInfo>>) -> Vec<Instr> {
     use crate::typechecker::type_check;
 
     let mut current_depth = 8;
@@ -478,12 +479,12 @@ fn compile_defn(defn: &Defn, mut ctx: CompileCtx) -> Vec<Instr> {
     ctx.env = env;
 
     // Create type environment for type checking
-    let mut env_t = HashMap::new();
+    let mut env_t = im::HashMap::new();
     for (param_name, param_type) in &defn.params {
         let type_info = param_type.clone().unwrap_or(TypeInfo::Any);
         env_t.insert(param_name.clone(), Box::new(type_info));
     }
-    let body_t = type_check(&defn.body, &env_t);
+    let body_t = type_check(&defn.body, &env_t, define_env_t, &ctx.defns);
     let body_instrs = compile_expr_define_env(
         &body_t,
         current_depth,
