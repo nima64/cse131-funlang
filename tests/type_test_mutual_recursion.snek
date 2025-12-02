@@ -1,0 +1,18 @@
+(fun (isodd (n : Num)) -> Bool
+(if (= n 0)
+false
+(iseven (sub1 n))
+)
+)
+
+(fun (iseven (n : Num)) -> Bool
+(if (= n 0)
+true
+(isodd (sub1 n))
+)
+)
+
+(block
+(print input)
+(print (iseven input))
+)
