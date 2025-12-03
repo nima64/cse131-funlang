@@ -35,7 +35,7 @@ fn run_jit(in_name: &str, input_arg: &str) -> std::io::Result<()> {
     let sexpr = parse(&in_contents).unwrap();
     let prog = parse_prog(&sexpr);
     let mut define_env_t = std::collections::HashMap::new();
-    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t);
+    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t, true);
 
     let result = jit_code_input(&instrs, input);
     println!("{}", format_result(result));
@@ -63,7 +63,7 @@ fn run_aot(in_name: &str, out_name: &str) -> std::io::Result<()> {
         }
     }
 
-    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t);
+    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t, false);
     let result = instrs_to_string(&instrs);
 
         let asm_program = format!(
@@ -71,7 +71,6 @@ fn run_aot(in_name: &str, out_name: &str) -> std::io::Result<()> {
 section .text
 extern snek_error
 extern print_fun
-extern compile_me
 global our_code_starts_here
 our_code_starts_here:
 {}
@@ -93,13 +92,6 @@ error_common:
 print_fun_external:
     sub rsp, 8 ; alignment for 16 bytes to prevent segfaulting
     call print_fun
-    add rsp, 8
-    ret
-compile_me_external:
-    ; AOT wrapper that forwards to the external `compile_me` stub
-    sub rsp, 8
-    mov rdi, rdi
-    call compile_me
     add rsp, 8
     ret
 done:
@@ -175,7 +167,7 @@ fn run_te(in_name: &str, input_arg: &str) -> std::io::Result<()> {
         }
     }
 
-    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t);
+    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t, true);
     let result = jit_code_input(&instrs, input);
     println!("{}", format_result(result));
     Ok(())
@@ -299,7 +291,7 @@ fn run_ti() {
                 match type_check_result {
                     Ok(_) => {
                         // define_env_t = temp_define_env_t;
-                        let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t);
+                        let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t, false);
 
                         if !instrs.is_empty() {
                             let result = jit_code(&instrs);
@@ -352,7 +344,7 @@ fn run_repl() {
                 main: parsed_prog.main,
             };
 
-            let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t);
+            let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t, false);
 
             if !instrs.is_empty() {
                 let result = jit_code(&instrs);

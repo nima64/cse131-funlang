@@ -112,18 +112,22 @@ fn compile_me_inner(
     slow_path_addr: u64,
 ) -> u64 {
     let mut map = registry().lock().unwrap();
-    let info = match map.get_mut(&id) {
-        Some(i) => i,
-        None => {
-            return 0;
-        }
-    };
+    
+    if !map.contains_key(&id) {
+        return 0;
+    }
 
+    let call_count = map.get(&id).unwrap().call_count;
 
     /* ============================================
        Case 1: First call — MUST type-check
     ============================================ */
-    if info.call_count == 0 {
+    if call_count == 0 {
+        // Collect all definitions for type checking (requires immutable borrow of map)
+        let defns: Vec<Defn> = map.values().map(|info| info.defn.clone()).collect();
+        
+        // Now get mutable reference to info
+        let info = map.get_mut(&id).unwrap();
 
         // Read raw argument values
         let args = unsafe { std::slice::from_raw_parts(args_ptr, count as usize) };
@@ -156,8 +160,10 @@ fn compile_me_inner(
             env_t.insert(param_name.clone(), Box::new(tp.clone()));
         }
 
+        let mut define_env_t = HashMap::new();
+
         // Run type_check: may panic → handled by caller of this function
-        let typed_body = type_check(&info.defn.body, &env_t);
+        let typed_body = type_check(&info.defn.body, &env_t, &mut define_env_t, &defns);
 
         // If function declared a return type, ensure compatible
         if let Some(expected) = &info.defn.return_type {
@@ -258,6 +264,7 @@ fn compile_me_inner(
     /* ============================================
        Case 2: Later calls
     ============================================ */
+    let info = map.get_mut(&id).unwrap();
     info.call_count += 1;
 
     match info.state {
