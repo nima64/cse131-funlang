@@ -203,7 +203,7 @@ fn compile_me_inner(
         }
 
         // If passes all guards, jump into slow for now (we don't inline body!)
-    
+        
         dynasm!(ops
             ; .arch x64
             ; push rbp
@@ -213,14 +213,25 @@ fn compile_me_inner(
             ; call rax
             ; mov rsp, rbp
             ; pop rbp
-            ; mov rax, 3
-            ; mov rsp, rbp
-            ; pop rbp
-            ; ret
+            ; jmp ->slow
             ; ->slow:
             ; mov rax, QWORD slow_addr_i64
             ; jmp rax
         );
+        //TODO: when optimization finished, use this version
+        //  dynasm!(ops
+        //     ; .arch x64
+        //     ; push rbp
+        //     ; mov rbp, rsp
+        //     ; and rsp, -16
+        //     ; mov rax, QWORD print_fast_ptr as i64
+        //     ; call rax
+        //     ; mov rsp, rbp
+        //     ; pop rbp
+        //     ; ->slow:
+        //     ; mov rax, QWORD slow_addr_i64
+        //     ; jmp rax
+        // );
 
         // Commit code
         match ops.finalize() {
