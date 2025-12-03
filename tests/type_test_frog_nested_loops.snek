@@ -1,0 +1,19 @@
+(fun (frog (n : Num)) -> Bool
+(loop (block
+
+(if (= n 0)
+(break true)
+(set! n (sub1 n))
+)
+
+(loop (block
+(if (= n 0)
+(break true)
+(set! n (sub1 (break (print n))))
+)
+))
+
+))
+)
+
+(frog input)

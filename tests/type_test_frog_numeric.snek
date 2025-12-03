@@ -1,0 +1,22 @@
+(fun (frog (n : Num)) -> Num
+( + 3
+(loop (block
+
+(if (= n 0)
+(break true)
+(set! n (sub1 (break n)))
+)
+
+(loop (block
+(if (= n 0)
+(break true)
+(set! n (sub1 (break n)))
+)
+))
+(break 0)
+
+))
+)
+)
+
+(frog (cast Num input))
