@@ -206,6 +206,7 @@ pub enum Instr {
     Label(String),        // label: - assembly label
     CMov(Condition, Reg, Reg), // conditional move
     Jump(Condition, String),
+    LeaLabel(Reg, String), // lea reg, [label]
 }
 
 // Helper to check if a value is a number (tag bit is 0)

@@ -1,0 +1,6 @@
+(fun (inc x) (+ x 1))
+(block
+  (inc 10)
+  (inc 20)
+  (inc false)
+)

@@ -1,0 +1,5 @@
+(fun (bad x)
+  (+ x true)
+)
+
+(bad 10)

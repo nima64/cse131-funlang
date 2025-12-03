@@ -4,6 +4,7 @@ mod parser;
 mod common;
 mod types;
 mod typechecker;
+mod compile_me;
 
 use assembly::*;
 use compiler::*;
@@ -34,7 +35,7 @@ fn run_jit(in_name: &str, input_arg: &str) -> std::io::Result<()> {
     let sexpr = parse(&in_contents).unwrap();
     let prog = parse_prog(&sexpr);
     let mut define_env_t = std::collections::HashMap::new();
-    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t);
+    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t, true);
 
     let result = jit_code_input(&instrs, input);
     println!("{}", format_result(result));
@@ -62,42 +63,42 @@ fn run_aot(in_name: &str, out_name: &str) -> std::io::Result<()> {
         }
     }
 
-    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t);
+    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t, false);
     let result = instrs_to_string(&instrs);
 
-    let asm_program = format!(
-        "
+        let asm_program = format!(
+                "
 section .text
 extern snek_error
 extern print_fun
 global our_code_starts_here
 our_code_starts_here:
 {}
-  jmp done
+    jmp done
 overflow_error:
-  mov rdi, 2
-  jmp error_common
+    mov rdi, 2
+    jmp error_common
 type_mismatch_error:
-  mov rdi, 1
-  jmp error_common
+    mov rdi, 1
+    jmp error_common
 type_error_arithmetic:
-  mov rdi, 3
-  jmp error_common
+    mov rdi, 3
+    jmp error_common
 bad_cast_error:
-  mov rdi, 4
+    mov rdi, 4
 error_common:
-  call snek_error
-  jmp done
+    call snek_error
+    jmp done
 print_fun_external:
-  sub rsp, 8 ; alignment for 16 bytes to prevent segfaulting
-  call print_fun
-  add rsp, 8
-  ret
+    sub rsp, 8 ; alignment for 16 bytes to prevent segfaulting
+    call print_fun
+    add rsp, 8
+    ret
 done:
-  ret
-            ",
-        result
-    );
+    ret
+                        ",
+                result
+        );
 
     let mut out_file = File::create(out_name)?;
     out_file.write_all(asm_program.as_bytes())?;
@@ -166,7 +167,7 @@ fn run_te(in_name: &str, input_arg: &str) -> std::io::Result<()> {
         }
     }
 
-    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t);
+    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t, true);
     let result = jit_code_input(&instrs, input);
     println!("{}", format_result(result));
     Ok(())
@@ -290,7 +291,7 @@ fn run_ti() {
                 match type_check_result {
                     Ok(_) => {
                         // define_env_t = temp_define_env_t;
-                        let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t);
+                        let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t, false);
 
                         if !instrs.is_empty() {
                             let result = jit_code(&instrs);
@@ -343,7 +344,7 @@ fn run_repl() {
                 main: parsed_prog.main,
             };
 
-            let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t);
+            let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t, false);
 
             if !instrs.is_empty() {
                 let result = jit_code(&instrs);

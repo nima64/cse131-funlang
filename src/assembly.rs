@@ -89,6 +89,9 @@ pub fn instr_to_string(instr: &Instr) -> String {
         Instr::Label(label) => {
             format!("{}:", label)
         }
+        Instr::LeaLabel(reg, label) => {
+            format!("lea {}, [rel {}]", reg_to_string(reg), label)
+        }
         Instr::CMov(condition, reg1, reg2) => {
             let cond_str = match condition {
                 Condition::Less => "l",
@@ -306,6 +309,11 @@ pub fn instr_to_asm(
                 Condition::Overflow => dynasm!(ops; .arch x64; cmovo Rq(r1), Rq(r2)),
                 Condition::Uncond => panic!("Cannot have unconditional CMOV"),
             }
+        }
+        Instr::LeaLabel(reg, label_name) => {
+            let lbl = labels.get(label_name).unwrap();
+            let r = reg.to_num();
+            dynasm!(ops; .arch x64; lea Rq(r), [=>*lbl]);
         }
     }
 }

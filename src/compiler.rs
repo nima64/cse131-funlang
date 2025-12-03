@@ -5,10 +5,12 @@ use std::cell::RefCell;
 use std::mem;
 use std::panic;
 use std::rc::Rc;
+use std::sync::{Mutex, OnceLock};
 
 use crate::assembly::*;
 use crate::common::*;
 use crate::types::*;
+use crate::compile_me::*;
 
 #[derive(Clone)]
 struct CompileCtx {
@@ -22,6 +24,7 @@ struct CompileCtx {
 struct SharedCompileCtx{
     label_counter: i32,
     max_depth: i32,
+    max_outgoing_args: i32,
     define_env: HashMap<String, Box<i64>>
 }
 
@@ -344,21 +347,33 @@ fn compile_expr_define_env(
                 );
             }
 
+            // Update max_outgoing_args
+            {
+                let mut shared = ctx.shared_ctx.borrow_mut();
+                if args.len() as i32 > shared.max_outgoing_args {
+                    shared.max_outgoing_args = args.len() as i32;
+                }
+            }
+
             let mut instrs = Vec::new();
 
-            for arg in args {
+            for (i, arg) in args.iter().enumerate() {
 
                 instrs.extend(compile_expr_define_env(
                     arg, stack_depth,
                     ctx.clone(),
                 ));
-                instrs.push(Instr::Push(Reg::Rax));
+                // Move result (RAX) to [RSP + i*8]
+                // instrs.push(Instr::MovToRsp(Reg::Rax, (i * 8) as i32));
+                // Replaced with standard instructions to avoid MovToRsp
+                // Use Rcx as scratch register (caller-saved, safe here)
+                instrs.push(Instr::MovReg(Reg::Rcx, Reg::Rsp));
+                instrs.push(Instr::Add(Reg::Rcx, (i * 8) as i32));
+                instrs.push(Instr::MovToMem(Reg::Rcx, Reg::Rax));
             }
 
             instrs.push(Instr::Call(name.clone()));
-            if !args.is_empty() {
-                instrs.push(Instr::Add(Reg::Rsp, (args.len() * 8) as i32));
-            }
+            // No stack adjustment needed!
 
             // Result is now in RAX
             instrs
@@ -394,7 +409,7 @@ fn compile_expr_define_env(
     }
 }
 
-pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>, define_env_t: &mut std::collections::HashMap<String, Box<TypeInfo>>) -> Vec<Instr> {
+pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>, define_env_t: &mut std::collections::HashMap<String, Box<TypeInfo>>, use_jit: bool) -> Vec<Instr> {
     use crate::typechecker::type_check;
 
     let base_input_slot = 16;
@@ -404,6 +419,7 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>, def
     let shared_ctx = Rc::new(RefCell::new(SharedCompileCtx {
         label_counter: 0,
         max_depth: base_input_slot,
+        max_outgoing_args: 0,
         define_env: std::mem::take(define_env),
     }));
 
@@ -421,7 +437,11 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>, def
 
     for defn in &prog.defns {
         instrs.push(Instr::Label(defn.name.clone()));
-        instrs.extend(compile_defn(defn, ctx.clone(), define_env_t));
+        if use_jit {
+            instrs.extend(compile_defn_optimized(defn, ctx.clone(), define_env_t));
+        } else {
+            instrs.extend(compile_defn(defn, ctx.clone(), define_env_t));
+        }
         instrs.push(Instr::Ret);
     }
 
@@ -437,7 +457,9 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>, def
     );
 
     let max_depth = shared_ctx.borrow().max_depth;
-    let frame_size: i32 = ((max_depth + 15) / 16) * 16;
+    let max_outgoing = shared_ctx.borrow().max_outgoing_args;
+    let total_size = max_depth + (max_outgoing * 8);
+    let frame_size: i32 = ((total_size + 15) / 16) * 16;
 
     // Prologue
     instrs.push(Instr::Push(Reg::Rbp));
@@ -457,45 +479,186 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>, def
     instrs
 }
 
-// TODO every function have create a new env?
-fn compile_defn(defn: &Defn, mut ctx: CompileCtx, define_env_t: &mut std::collections::HashMap<String, Box<TypeInfo>>) -> Vec<Instr> {
-    use crate::typechecker::type_check;
+fn compile_defn(defn: &Defn, mut ctx: CompileCtx, _define_env_t: &mut std::collections::HashMap<String, Box<TypeInfo>>) -> Vec<Instr> {
+    use crate::typechecker::annotate_any;
+
+    // Save global context state
+    let (old_max_depth, old_max_outgoing) = {
+        let shared = ctx.shared_ctx.borrow();
+        (shared.max_depth, shared.max_outgoing_args)
+    };
+
+    // Reset for this function
+    {
+        let mut shared = ctx.shared_ctx.borrow_mut();
+        shared.max_depth = 0;
+        shared.max_outgoing_args = 0;
+    }
 
     let mut current_depth = 8;
-    let mut max_depth = current_depth;
     let mut env = HashMap::new();
 
-    // assume args are already allocated
     // Arguments are at positive offsets from rbp
+    // Formula: arg_k offset = 16 + (k-1)*8
     let num_params = defn.params.len();
     for (i, (arg_name, _type)) in defn.params.iter().enumerate() {
-        // 8 +  for intial ret addr put on stack by call
-        let offset = 8 + ((num_params - i) * 8);
-
+        let offset = 16 + (i * 8);
         env.insert(arg_name.clone(), -1 * offset as i32);
     }
 
     // Update context with function's env
     ctx.env = env;
 
-    // Create type environment for type checking
-    let mut env_t = im::HashMap::new();
-    for (param_name, param_type) in &defn.params {
-        let type_info = param_type.clone().unwrap_or(TypeInfo::Any);
-        env_t.insert(param_name.clone(), Box::new(type_info));
-    }
-    let body_t = type_check(&defn.body, &env_t, define_env_t, &ctx.defns);
+    // Skip static type checking for functions to allow dynamic typing (Any)
+    // We rely on runtime checks generated by compile_expr_define_env
+    let body_t = annotate_any(&defn.body);
     let body_instrs = compile_expr_define_env(
         &body_t,
         current_depth,
         ctx.clone(),
     );
 
+    let (max_depth, max_outgoing) = {
+        let shared = ctx.shared_ctx.borrow();
+        (shared.max_depth, shared.max_outgoing_args)
+    };
+    
+    let total_size = max_depth + (max_outgoing * 8);
+    let frame_size = if total_size % 16 == 0 { total_size } else { (total_size / 16 + 1) * 16 };
+
+    // Restore global context state
+    {
+        let mut shared = ctx.shared_ctx.borrow_mut();
+        shared.max_depth = old_max_depth;
+        shared.max_outgoing_args = old_max_outgoing;
+    }
+
     let mut instrs = Vec::new();
     instrs.push(Instr::Push(Reg::Rbp));
     instrs.push(Instr::MovReg(Reg::Rbp, Reg::Rsp));
-    instrs.push(Instr::Sub(Reg::Rsp, max_depth));
+    
+    // Align stack to 16 bytes
+    instrs.push(Instr::Sub(Reg::Rsp, frame_size));
 
+    instrs.extend(body_instrs);
+
+    // Epilogue
+    instrs.push(Instr::MovReg(Reg::Rsp, Reg::Rbp));
+    instrs.push(Instr::Pop(Reg::Rbp));
+
+    instrs
+}
+
+fn compile_defn_optimized(defn: &Defn, mut ctx: CompileCtx, _define_env_t: &mut std::collections::HashMap<String, Box<TypeInfo>>) -> Vec<Instr> {
+    use crate::typechecker::annotate_any;
+
+    // Save global context state
+    let (old_max_depth, old_max_outgoing) = {
+        let shared = ctx.shared_ctx.borrow();
+        (shared.max_depth, shared.max_outgoing_args)
+    };
+
+    // Reset for this function
+    {
+        let mut shared = ctx.shared_ctx.borrow_mut();
+        shared.max_depth = 0;
+        shared.max_outgoing_args = 0;
+    }
+
+    let mut current_depth = 8;
+    let mut env = HashMap::new();
+
+    // Arguments are at positive offsets from rbp
+    // Formula: arg_k offset = 16 + (k-1)*8
+    let num_params = defn.params.len();
+    for (i, (arg_name, _type)) in defn.params.iter().enumerate() {
+        let offset = 16 + (i * 8);
+        env.insert(arg_name.clone(), -1 * offset as i32);
+    }
+
+    // Update context with function's env
+    ctx.env = env;
+
+    // Skip static type checking for functions to allow dynamic typing (Any)
+    // We rely on runtime checks generated by compile_expr_define_env
+    let body_t = annotate_any(&defn.body);
+    let body_instrs = compile_expr_define_env(
+        &body_t,
+        current_depth,
+        ctx.clone(),
+    );
+
+    let (max_depth, max_outgoing) = {
+        let shared = ctx.shared_ctx.borrow();
+        (shared.max_depth, shared.max_outgoing_args)
+    };
+    
+    let total_size = max_depth + (max_outgoing * 8);
+    let frame_size = if total_size % 16 == 0 { total_size } else { (total_size / 16 + 1) * 16 };
+
+    // Restore global context state
+    {
+        let mut shared = ctx.shared_ctx.borrow_mut();
+        shared.max_depth = old_max_depth;
+        shared.max_outgoing_args = old_max_outgoing;
+    }
+
+    let mut instrs = Vec::new();
+    instrs.push(Instr::Push(Reg::Rbp));
+    instrs.push(Instr::MovReg(Reg::Rbp, Reg::Rsp));
+    
+    // Align stack to 16 bytes
+    instrs.push(Instr::Sub(Reg::Rsp, frame_size));
+
+    let fn_id = record_function(defn);
+    
+    // Metadata check using external array
+    // Load address of FAST_ADDRS[fn_id]
+    let fast_addrs_base = std::ptr::addr_of!(crate::compile_me::FAST_ADDRS) as i64;
+    let slot_addr = fast_addrs_base + (fn_id as i64 * 8);
+    
+    
+    instrs.push(Instr::Mov(Reg::Rcx, slot_addr));
+    instrs.push(Instr::MovDeref(Reg::Rax, Reg::Rcx)); // mov rax, [rcx]
+    
+    instrs.push(Instr::CmpImm(Reg::Rax, 0));
+    
+    let do_jump_label = format!("do_jump_{}", fn_id);
+    instrs.push(Instr::Jump(Condition::NotEqual, do_jump_label.clone()));
+
+    // Pass arguments to compile_me
+    // RDI = id
+    instrs.push(Instr::Mov(Reg::Rdi, fn_id as i64));
+    
+    // RSI = args_ptr = RBP + 16
+    instrs.push(Instr::MovReg(Reg::Rsi, Reg::Rbp));
+    instrs.push(Instr::Add(Reg::Rsi, 16));
+
+    // RDX = count
+    instrs.push(Instr::Mov(Reg::Rdx, num_params as i64));
+
+    // RCX = slow_path_addr
+    let slow_label = format!("slow_path_{}", fn_id);
+    instrs.push(Instr::LeaLabel(Reg::Rcx, slow_label.clone()));
+
+    instrs.push(Instr::Call("compile_me_external".to_string()));
+
+    // Check if compile_me returned 0 (failure/slow path)
+    instrs.push(Instr::CmpImm(Reg::Rax, 0));
+    instrs.push(Instr::Jump(Condition::Equal, slow_label.clone()));
+    
+    // If not 0, cache it and jump
+    // We need to reload the slot address because Rcx might be clobbered by compile_me call
+    instrs.push(Instr::Mov(Reg::Rcx, slot_addr));
+    instrs.push(Instr::MovToMem(Reg::Rcx, Reg::Rax)); // mov [rcx], rax
+    
+    instrs.push(Instr::Label(do_jump_label));
+    // instrs.push(Instr::JmpReg(Reg::Rax));
+    // Replaced with push/ret to avoid JmpReg
+    instrs.push(Instr::Push(Reg::Rax));
+    instrs.push(Instr::Ret);
+
+    instrs.push(Instr::Label(slow_label));
     instrs.extend(body_instrs);
 
     // Epilogue
@@ -518,16 +681,21 @@ pub fn jit_code_input(instrs: &Vec<Instr>, input: i64) -> i64 {
     let error_bad_cast = ops.new_dynamic_label();
     let error_common = ops.new_dynamic_label();
     let print_fun_external = ops.new_dynamic_label();
+    let compile_me_external = ops.new_dynamic_label();
 
     labels.insert("type_mismatch_error".to_string(), error_type_mismatch);
     labels.insert("overflow_error".to_string(), error_overflow);
     labels.insert("type_error_arithmetic".to_string(), error_arithmetic);
     labels.insert("bad_cast_error".to_string(), error_bad_cast);
     labels.insert("print_fun_external".to_string(), print_fun_external);
+    labels.insert("compile_me_external".to_string(), compile_me_external);
     let c_func_ptr: extern "C" fn(i64) -> i64 =
         unsafe { mem::transmute(snek_error as *const ()) };
     let print_func_ptr: extern "C" fn(i64) -> i64 =
         unsafe { mem::transmute(print_fun as *const ()) };
+    let compile_me_ptr: extern "C" fn(u64, *const i64, u64) -> u64 =
+        unsafe { mem::transmute(crate::compile_me::compile_me as *const ()) };
+
 
     // Pre-create all labels
     for instr in instrs {
@@ -560,6 +728,12 @@ pub fn jit_code_input(instrs: &Vec<Instr>, input: i64) -> i64 {
         ; =>print_fun_external
         ; sub rsp, 8
         ; mov rax, QWORD print_func_ptr as i64
+        ; call rax
+        ; add rsp, 8
+        ; ret
+        ; =>compile_me_external
+        ; sub rsp, 8
+        ; mov rax, QWORD compile_me_ptr as i64
         ; call rax
         ; add rsp, 8
         ; ret
