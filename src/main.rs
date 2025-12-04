@@ -5,6 +5,7 @@ mod common;
 mod types;
 mod typechecker;
 mod compile_me;
+mod optimizer;
 
 use assembly::*;
 use compiler::*;
@@ -14,13 +15,11 @@ use common::*;
 use sexp::*;
 use std::env;
 use std::fs::File;
-use std::io;
-use std::io::*;
-use im::HashMap;
-use std::panic::{catch_unwind, set_hook, take_hook, AssertUnwindSafe};
-
-use crate::typechecker::{type_check, type_check_prog};
+use std::io::{self, *};
+use std::collections::HashMap;
 use crate::types::{Prog, TypeInfo};
+use crate::typechecker::*;
+use crate::optimizer::*;
 
 
 fn run_jit(in_name: &str, input_arg: &str, typecheck_enabled: bool) -> std::io::Result<()> {
@@ -33,24 +32,24 @@ fn run_jit(in_name: &str, input_arg: &str, typecheck_enabled: bool) -> std::io::
     // Wrap in parentheses to create a program
     in_contents = format!("({})", in_contents);
     let sexpr = parse(&in_contents).unwrap();
-    let prog = parse_prog(&sexpr);
+    let mut prog = parse_prog(&sexpr);
     
     let mut env_t = im::HashMap::new();
     env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
     let mut define_env_t = std::collections::HashMap::new();
 
     if typecheck_enabled {
-        match type_check_prog(&prog, &env_t, &mut define_env_t) {
+        match annotate_program(&mut prog, &mut HashMap::new()) {
             Ok(_) => {},
             Err(err) => {
-                eprintln!("{}", err);
+                eprintln!("Type Error: {}", err);
                 std::process::exit(1);
             }
         }
+        optimize_program(&mut prog);
     }
-    
 
-    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t, true);
+    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t, true, typecheck_enabled);
 
     let result = jit_code_input(&instrs, input);
     println!("{}", format_result(result));
@@ -64,23 +63,23 @@ fn run_aot(in_name: &str, out_name: &str, typecheck_enabled: bool) -> std::io::R
     in_contents = format!("({})", in_contents);
 
     let sexpr = parse(&in_contents).unwrap();
-    let prog = parse_prog(&sexpr);
+    let mut prog = parse_prog(&sexpr);
 
     let mut env_t = im::HashMap::new();
     env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
     let mut define_env_t = std::collections::HashMap::new();
 
     if typecheck_enabled {
-        match type_check_prog(&prog, &env_t, &mut define_env_t) {
+        match annotate_program(&mut prog, &mut HashMap::new()) {
             Ok(_) => {},
             Err(err) => {
-                eprintln!("{}", err);
+                eprintln!("Type Error: {}", err);
                 std::process::exit(1);
             }
         }
     }
 
-    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t, false);
+    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t, false, typecheck_enabled);
     let result = instrs_to_string(&instrs);
 
         let asm_program = format!(
@@ -141,26 +140,15 @@ fn run_t(in_name: &str) -> std::io::Result<()> {
     in_contents = format!("({})", in_contents);
 
     let sexpr = parse(&in_contents).unwrap();
-    let prog = parse_prog(&sexpr);
+    let mut prog = parse_prog(&sexpr);
 
     let mut env_t = im::HashMap::new();
     env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
-    let mut define_env_t = std::collections::HashMap::new();
+    // let mut define_env_t = std::collections::HashMap::new();
 
-    match type_check_prog(&prog, &env_t, &mut define_env_t) {
-        Ok(main_type) => {
-            match main_type {
-                TypeInfo::Num => println!("Num"),
-                TypeInfo::Bool => println!("Bool"),
-                TypeInfo::Any => println!("Any"),
-                TypeInfo::Nothing => println!("Nothing"),
-            }
-            Ok(())
-        }
-        Err(err) => {
-            eprintln!("{}", err);
-            std::process::exit(1);
-        }
+    match annotate_program(&mut prog, &mut HashMap::new()) {
+        Ok(_) => {println!("{:?}", &prog.main.get_type_info()); return Ok(())},
+        Err(err) => {eprintln!("Type Error: {}", err); return Ok(());}
     }
 }
 
@@ -169,6 +157,7 @@ fn run_repl(typecheck_enabled: bool) {
         let mut repl_env: im::HashMap<String, Box<i64>> = im::HashMap::new();
         let mut accumulated_defns: Vec<types::Defn> = vec![];
         let mut define_env_t = std::collections::HashMap::new();
+        let mut global_var_env= HashMap::new();
 
         loop {
             print!("> ");
@@ -199,40 +188,29 @@ fn run_repl(typecheck_enabled: bool) {
             accumulated_defns.extend(parsed_prog.defns);
 
             // Create a new Prog with all accumulated defns and the new main expression
-            let prog = Prog {
+            let mut prog = Prog {
                 defns: accumulated_defns.clone(),
                 main: parsed_prog.main,
             };
 
             if typecheck_enabled {
-                let env_t = im::HashMap::new();
-                let panic_result = catch_unwind(AssertUnwindSafe(|| {
-                    type_check_prog(&prog, &env_t, &mut define_env_t)
-                }));
-                match panic_result {
-                    Ok(type_check_result) => {
-                        match type_check_result {
-                            Ok(_) => {
-                                // define_env_t = temp_define_env_t;
-                                let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t, false);
+                match annotate_program(&mut prog, &mut global_var_env) {
+                    Ok(_) => {
+                        // define_env_t = temp_define_env_t;
+                        let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t, false, typecheck_enabled);
 
-                                if !instrs.is_empty() {
-                                    let result = jit_code(&instrs);
-                                    println!("value: {}", format_result(result));
-                                }
-                            }
-                            Err(err) => {
-                                eprintln!("{}", err);
-                            }
+                        if !instrs.is_empty() {
+                            let result = jit_code(&instrs);
+                            println!("{}", format_result(result));
                         }
                     }
-                    Err(_) => {
-                        // Panic occurred in type_check_prog, do nothing
+                    Err(err) => {
+                        println!("Type Error: {}", err);
                     }
                 }
             }
             else {
-                let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t, false);
+                let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t, false, typecheck_enabled);
                 if !instrs.is_empty() {
                     let result = jit_code(&instrs);
                     println!("{}", format_result(result));

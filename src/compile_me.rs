@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use dynasmrt::AssemblyOffset;
-use crate::types::{TypeInfo, Defn, is_number_tag, is_bool_tag, is_subtype};
-use crate::typechecker::type_check;
+use crate::types::{TypeInfo, Defn, is_number_tag, is_bool_tag, TypeEnv};
+use crate::typechecker::*;
 use dynasmrt::{dynasm, DynasmApi, DynasmLabelApi};
 
 pub static GLOBAL_OPS: OnceLock<Mutex<dynasmrt::Assembler<dynasmrt::x64::X64Relocation>>> = OnceLock::new();
@@ -155,24 +155,23 @@ fn compile_me_inner(
         }
 
         // Build type env
-        let mut env_t = im::HashMap::new();
-        for ((param_name, _), tp) in info.defn.params.iter().zip(&inferred_types) {
-            env_t.insert(param_name.clone(), Box::new(tp.clone()));
+        let mut tenv = TypeEnv::new();
+        tenv.funs.insert(info.defn.name.clone(), (inferred_types.clone(), info.defn.return_type.clone()));
+
+        let mut var_map = HashMap::new();
+        for a in info.defn.params.iter() {
+            var_map.insert(a.name.clone(), a.ann_type.clone());
         }
-
-        let mut define_env_t = HashMap::new();
-
-        // Run type_check: may panic → handled by caller of this function
-        let typed_body = type_check(&info.defn.body, &env_t, &mut define_env_t, &defns);
+        let local_env = TypeEnv { vars: var_map, funs: tenv.funs.clone() };
+        let typed_body = annotate_expr(&info.defn.body, &local_env, &mut HashMap::new());
 
         // If function declared a return type, ensure compatible
-        if let Some(expected) = &info.defn.return_type {
-            let actual = typed_body.get_type_info();
-            if !is_subtype(actual, expected) {
-                info.state = CompileState::OnlySlow;
-                info.call_count = 1;
-                return 0;
-            }
+        let expected = &info.defn.return_type;
+        let actual = typed_body.get_type_info();
+        if !actual.is_subtype_of(expected) {
+            info.state = CompileState::OnlySlow;
+            info.call_count = 1;
+            return 0;
         }
 
         // All good — so generate fast version

@@ -78,8 +78,10 @@ fn compile_expr_define_env(
                     check(&mut instrs, if let Op1::IsNum = op {Condition::Equal} else {Condition::NotEqual});
                 }
                 Op1::Add1 | Op1::Sub1 => {
-                    instrs.push(Instr::Test(Reg::Rax, 1));// AND with 1 to check LSB and see if its 1 aka BOOL 
-                    err_if(&mut instrs, Condition::NotEqual, RuntimeErr::ArithmeticType); // jump to error if it is boolean 
+                    if let TypeInfo::Any = subexpr.get_type_info() {
+                        instrs.push(Instr::Test(Reg::Rax, 1));// AND with 1 to check LSB and see if its 1 aka BOOL 
+                        err_if(&mut instrs, Condition::NotEqual, RuntimeErr::ArithmeticType); // jump to error if it is boolean 
+                    }
                     instrs.push(if let Op1::Add1 = op {Instr::Add(Reg::Rax, 2)} else {Instr::Sub(Reg::Rax, 2)});
                     err_if(&mut instrs, Condition::Overflow, RuntimeErr::Overflow);
                 }
@@ -112,10 +114,17 @@ fn compile_expr_define_env(
                 }
                 _ => {
                     // type check 
-                    instrs.push(Instr::Test(Reg::Rcx, 1));// AND with 1 to check LSB and see if its 1 aka BOOL 
-                    err_if(&mut instrs, Condition::NotEqual, RuntimeErr::ArithmeticType);
-                    instrs.push(Instr::Test(Reg::Rax, 1));
-                    err_if(&mut instrs, Condition::NotEqual, RuntimeErr::ArithmeticType); 
+                    let e1_type = e1.get_type_info();
+                    let e2_type = e2.get_type_info();
+
+                    if let TypeInfo::Any = e1_type {
+                        instrs.push(Instr::Test(Reg::Rcx, 1));// AND with 1 to check LSB and see if its 1 aka BOOL 
+                        err_if(&mut instrs, Condition::NotEqual, RuntimeErr::ArithmeticType);
+                    }
+                    if let TypeInfo::Any = e2_type {
+                        instrs.push(Instr::Test(Reg::Rax, 1));
+                        err_if(&mut instrs, Condition::NotEqual, RuntimeErr::ArithmeticType); 
+                    }
                     // end type check 
 
                     match op {
@@ -409,9 +418,7 @@ fn compile_expr_define_env(
     }
 }
 
-pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>, define_env_t: &mut std::collections::HashMap<String, Box<TypeInfo>>, use_jit: bool) -> Vec<Instr> {
-    use crate::typechecker::type_check;
-
+pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>, define_env_t: &mut std::collections::HashMap<String, Box<TypeInfo>>, use_jit: bool, typecheck_enabled: bool) -> Vec<Instr> {
     let base_input_slot = 16;
     let mut env = HashMap::new();
     env.insert("input".to_string(), base_input_slot);
@@ -437,7 +444,7 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>, def
 
     for defn in &prog.defns {
         instrs.push(Instr::Label(defn.name.clone()));
-        if use_jit {
+        if use_jit && typecheck_enabled {
             instrs.extend(compile_defn_optimized(defn, ctx.clone(), define_env_t));
         } else {
             instrs.extend(compile_defn(defn, ctx.clone(), define_env_t));
@@ -498,9 +505,9 @@ fn compile_defn(defn: &Defn, mut ctx: CompileCtx, _define_env_t: &mut std::colle
     // Arguments are at positive offsets from rbp
     // Formula: arg_k offset = 16 + (k-1)*8
     let num_params = defn.params.len();
-    for (i, (arg_name, _type)) in defn.params.iter().enumerate() {
+    for (i, arg) in defn.params.iter().enumerate() {
         let offset = 16 + (i * 8);
-        env.insert(arg_name.clone(), -1 * offset as i32);
+        env.insert(arg.name.clone(), -1 * offset as i32);
     }
 
     // Update context with function's env
@@ -564,9 +571,9 @@ fn compile_defn_optimized(defn: &Defn, mut ctx: CompileCtx, _define_env_t: &mut 
     // Arguments are at positive offsets from rbp
     // Formula: arg_k offset = 16 + (k-1)*8
     let num_params = defn.params.len();
-    for (i, (arg_name, _type)) in defn.params.iter().enumerate() {
+    for (i, arg) in defn.params.iter().enumerate() {
         let offset = 16 + (i * 8);
-        env.insert(arg_name.clone(), -1 * offset as i32);
+        env.insert(arg.name.clone(), -1 * offset as i32);
     }
 
     // Update context with function's env

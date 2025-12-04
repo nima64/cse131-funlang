@@ -46,8 +46,8 @@ runtime_error_tests! {
 
 static_error_tests! {
     // Type checking error tests
-    type_test_3_any_error: { file: "type_test_3_any_error", input: "", expected: "Expected Num type" },
-    type_test_8_input_error: { file: "type_test_8_input_error", input: "", expected: "Expected Num type" },
+    type_test_3_any_error: { file: "type_test_3_any_error", input: "", expected: "Type Error", typecheck: true },
+    type_test_8_input_error: { file: "type_test_8_input_error", input: "", expected: "Type Error", typecheck: true },
 
     // test_loop_break_error: { file: "loop_break", input: "", expected: "break outside of loop" },
     duplicate_function_name: { file: "duplicate_fun", input: "", expected: "Multiple functions are defined with the same name" },

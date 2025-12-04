@@ -1,4 +1,4 @@
-use im::HashMap;
+use std::collections::HashMap;
 
 /** Type Checker **/ 
 
@@ -61,7 +61,7 @@ impl TypeEnv {
     pub fn lookup_var(&self, name: &String) -> TypeInfo {
         match self.vars.get(name) {
             Some(t) => t.clone(),
-            None => panic!("Variable {} not found in type environment", name),
+            None => panic!("Variable {} not found in type environment", name)
         }
     }
 
@@ -159,10 +159,16 @@ pub use crate::common::{
 };
 
 #[derive(Debug, Clone)]
+pub struct Arg {
+    pub name: String,
+    pub ann_type: TypeInfo
+}
+
+#[derive(Debug, Clone)]
 pub struct Defn {
     pub name: String,
-    pub params: Vec<(String, Option<TypeInfo>)>, // (name, optional type annotation)
-    pub return_type: Option<TypeInfo>, // optional return type annotation
+    pub params: Vec<Arg>,
+    pub return_type: TypeInfo, // optional return type annotation
     pub body: Box<ExprT>,
 }
 

@@ -16,4 +16,4 @@
 ))
 )
 
-(frog input)
+(frog (cast Num input))

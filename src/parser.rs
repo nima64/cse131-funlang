@@ -165,7 +165,7 @@ pub fn parse_defn(s: &Sexp) -> Defn {
                             Defn {
                                 name: name.to_string(),
                                 params: parsed_params,
-                                return_type: Some(ret_type),
+                                return_type: ret_type,
                                 body: Box::new(parse_expr(body)),
                             }
                         }
@@ -181,7 +181,7 @@ pub fn parse_defn(s: &Sexp) -> Defn {
                             Defn {
                                 name: name.to_string(),
                                 params: parsed_params,
-                                return_type: None,
+                                return_type: TypeInfo::Any,
                                 body: Box::new(parse_expr(body)),
                             }
                         }
@@ -208,18 +208,21 @@ fn parse_type(s: &Sexp) -> TypeInfo {
     }
 }
 
-fn parse_params(params: &[Sexp]) -> Vec<(String, Option<TypeInfo>)> {
+fn parse_params(params: &[Sexp]) -> Vec<Arg> {
     let mut result = Vec::new();
     let mut seen = HashSet::new();
 
     for param in params {
         match param {
             Sexp::Atom(S(param_name)) => {
-                // Un-annotated parameter
+                // Un-annotated parameter - default to Any
                 if !seen.insert(param_name.to_string()) {
                     panic!("Duplicate Argument");
                 }
-                result.push((param_name.to_string(), None));
+                result.push(Arg {
+                    name: param_name.to_string(),
+                    ann_type: TypeInfo::Any,
+                });
             }
             _ => panic!("Invalid: function parameter must be an identifier"),
         }
@@ -228,7 +231,7 @@ fn parse_params(params: &[Sexp]) -> Vec<(String, Option<TypeInfo>)> {
     result
 }
 
-fn parse_typed_params(params: &[Sexp]) -> Vec<(String, Option<TypeInfo>)> {
+fn parse_typed_params(params: &[Sexp]) -> Vec<Arg> {
     let mut result = Vec::new();
     let mut seen = HashSet::new();
 
@@ -241,16 +244,22 @@ fn parse_typed_params(params: &[Sexp]) -> Vec<(String, Option<TypeInfo>)> {
                         panic!("Duplicate Argument");
                     }
                     let param_type = parse_type(type_sexp);
-                    result.push((param_name.to_string(), Some(param_type)));
+                    result.push(Arg {
+                        name: param_name.to_string(),
+                        ann_type: param_type,
+                    });
                 }
                 _ => panic!("Invalid: expected (param : Type)"),
             },
             Sexp::Atom(S(param_name)) => {
-                // Un-annotated parameter in annotated function
+                // Un-annotated parameter in annotated function - default to Any
                 if !seen.insert(param_name.to_string()) {
                     panic!("Duplicate Argument");
                 }
-                result.push((param_name.to_string(), None));
+                result.push(Arg {
+                    name: param_name.to_string(),
+                    ann_type: TypeInfo::Any,
+                });
             }
             _ => panic!("Invalid: function parameter format"),
         }
