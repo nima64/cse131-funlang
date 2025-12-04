@@ -10,7 +10,7 @@ fn has_set(expr: &ExprT, x: String) -> bool {
         | ExprT::Loop(e, _)
         | ExprT::Break(e, _) 
         | ExprT::Define(_, e, _)
-        | ExprT::Cast(e, _) => has_set(e, x.clone()),
+        | ExprT::Cast(_, e, _) => has_set(e, x.clone()),
         ExprT::BinOp(_, e1, e2, _) => has_set(e1, x.clone()) || has_set(e2, x.clone()),
         ExprT::Let(bindings, eb, _) => {
             for (_, bind) in bindings {
@@ -51,10 +51,10 @@ pub fn optimize(e: &ExprT, env: HashMap<String, ExprT>) -> ExprT {
         ExprT::UnOp(op, subexpr, t) => {
             let subexpr_folded = optimize(subexpr, env.clone());
             match (op, subexpr_folded.clone()) {
-                (Op1::Add1, ExprT::Number(n, _)) => ExprT::Number(n + 1, Type::Num),
-                (Op1::Sub1, ExprT::Number(n, _)) => ExprT::Number(n - 1, Type::Num),
-                (Op1::IsNum, ExprT::Boolean(_, _)) | (Op1::IsBool, ExprT::Number(_, _)) => ExprT::Boolean(false, Type::Bool),
-                (Op1::IsNum, ExprT::Number(_, _)) | (Op1::IsBool, ExprT::Boolean(_, _)) => ExprT::Boolean(true, Type::Bool),
+                (Op1::Add1, ExprT::Number(n, _)) => ExprT::Number(n + 1, TypeInfo::Num),
+                (Op1::Sub1, ExprT::Number(n, _)) => ExprT::Number(n - 1, TypeInfo::Num),
+                (Op1::IsNum, ExprT::Boolean(_, _)) | (Op1::IsBool, ExprT::Number(_, _)) => ExprT::Boolean(false, TypeInfo::Bool),
+                (Op1::IsNum, ExprT::Number(_, _)) | (Op1::IsBool, ExprT::Boolean(_, _)) => ExprT::Boolean(true, TypeInfo::Bool),
                 _ => ExprT::UnOp(op.clone(), Box::new(subexpr_folded), t.clone())
             }
         }
@@ -63,13 +63,13 @@ pub fn optimize(e: &ExprT, env: HashMap<String, ExprT>) -> ExprT {
             let e1_folded = optimize(e1, env.clone());
             let e2_folded = optimize(e2, env.clone());
             match (op, e1_folded.clone(), e2_folded.clone()) {
-                (Op2::Plus, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Number(n1 + n2, Type::Num),
+                (Op2::Plus, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Number(n1 + n2, TypeInfo::Num),
                 (Op2::Plus, e_folded, ExprT::Number(1, _)) | (Op2::Plus, ExprT::Number(1, _), e_folded) => ExprT::UnOp(Op1::Add1, Box::new(e_folded), t.clone()),
 
-                (Op2::Minus, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Number(n1 - n2, Type::Num),
+                (Op2::Minus, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Number(n1 - n2, TypeInfo::Num),
                 (Op2::Minus, e_folded, ExprT::Number(1, _)) => ExprT::UnOp(Op1::Sub1, Box::new(e_folded), t.clone()),
 
-                (Op2::Times, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Number(n1 * n2, Type::Num),
+                (Op2::Times, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Number(n1 * n2, TypeInfo::Num),
 
                 (Op2::Plus, e_folded, ExprT::Number(0, _))
                 | (Op2::Minus, e_folded, ExprT::Number(0, _))
@@ -78,12 +78,12 @@ pub fn optimize(e: &ExprT, env: HashMap<String, ExprT>) -> ExprT {
                 (Op2::Plus, ExprT::Number(0, _), e_folded) 
                 | (Op2::Times, ExprT::Number(1, _), e_folded) => e_folded,
 
-                (Op2::Equal, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Boolean(n1 == n2, Type::Bool),
-                (Op2::Equal, ExprT::Boolean(b1, _), ExprT::Boolean(b2, _)) => ExprT::Boolean(b1 == b2, Type::Bool),
-                (Op2::Less, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Boolean(n1 < n2, Type::Bool),
-                (Op2::LessEqual, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Boolean(n1 <= n2, Type::Bool),
-                (Op2::Greater, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Boolean(n1 > n2, Type::Bool),
-                (Op2::GreaterEqual, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Boolean(n1 >= n2, Type::Bool),
+                (Op2::Equal, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Boolean(n1 == n2, TypeInfo::Bool),
+                (Op2::Equal, ExprT::Boolean(b1, _), ExprT::Boolean(b2, _)) => ExprT::Boolean(b1 == b2, TypeInfo::Bool),
+                (Op2::Less, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Boolean(n1 < n2, TypeInfo::Bool),
+                (Op2::LessEqual, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Boolean(n1 <= n2, TypeInfo::Bool),
+                (Op2::Greater, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Boolean(n1 > n2, TypeInfo::Bool),
+                (Op2::GreaterEqual, ExprT::Number(n1, _), ExprT::Number(n2, _)) => ExprT::Boolean(n1 >= n2, TypeInfo::Bool),
 
                 _ => ExprT::BinOp(op.clone(), Box::new(e1_folded), Box::new(e2_folded), t.clone())
             }
@@ -127,12 +127,12 @@ pub fn optimize(e: &ExprT, env: HashMap<String, ExprT>) -> ExprT {
         }
 
         // Cast optimization
-        ExprT::Cast(e, t) => {
+        ExprT::Cast(target, e, t) => {
             let optimized_e = optimize(e, env.clone());
-            if optimized_e.get_type().is_subtype_of(t) {
+            if optimized_e.get_type_info().is_subtype_of(t) {
                 optimized_e
             } else {
-                ExprT::Cast(Box::new(optimized_e), t.clone())
+                ExprT::Cast(target.clone(), Box::new(optimized_e), t.clone())
             }
         }
 
