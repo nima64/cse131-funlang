@@ -1,6 +1,6 @@
 use crate::types::*;
 use im::HashMap;
-use std::collections::HashMap as MutHashMap;
+use crate::types::ExprT::*;
 /* 
 pub fn union_type(t1: &TypeInfo, t2: &TypeInfo) -> TypeInfo {
     use TypeInfo::*;
@@ -252,277 +252,276 @@ pub fn type_check_helper(expr: &ExprT, env_t:&HashMap<String, Box<TypeInfo>>, de
     }
 }
  */
-pub fn annotate_program(program: &mut crate::syntax::Program, enable: bool) -> Result<(), String> {
-    if !enable {
-        return Ok(());
+pub fn annotate_expr(e: &ExprT, type_env: &TypeEnv) -> ExprT {
+    match e {
+        Number(n, _) => Number(*n, TypeInfo::Num),
+        Boolean(b, _) => Boolean(*b, TypeInfo::Bool),
+        Id(name, _) => {
+            let var_type = if name == "input" { TypeInfo::Any } else { type_env.lookup_var(name) };
+            Id(name.clone(), var_type)
+        }
+        Loop(body, _) => {
+            let annotated_body = annotate_expr(body, type_env);
+            let (t, _) = typecheck(e, type_env);
+            Loop(Box::new(annotated_body), t)
+        }
+        Break(be, _) => {
+            let annotated_be = annotate_expr(be, type_env);
+            let (_t, _) = typecheck(e, type_env);
+            Break(Box::new(annotated_be), TypeInfo::Nothing)
+        }
+        Block(exprs, _) => {
+            let mut annotated = Vec::new();
+            for ex in exprs {
+                annotated.push(annotate_expr(ex, type_env));
+            }
+            // compute block type via typecheck
+            let (t, _) = typecheck(e, type_env);
+            Block(annotated, t)
+        }
+        FunCall(name, args, _) => {
+            let mut ann_args = Vec::new();
+            for a in args {
+                ann_args.push(annotate_expr(a, type_env));
+            }
+            let (t, _) = typecheck(e, type_env);
+            FunCall(name.clone(), ann_args, t)
+        }
+        If(cond, then_e, else_e, _) => {
+            let ann_cond = annotate_expr(cond, type_env);
+            let ann_then = annotate_expr(then_e, type_env);
+            let ann_else = annotate_expr(else_e, type_env);
+            let (t, _) = typecheck(e, type_env);
+            If(Box::new(ann_cond), Box::new(ann_then), Box::new(ann_else), t)
+        }
+        Let(bindings, body, _) => {
+            // incrementally annotate bindings similar to the typecheck behavior
+            let mut new_vars = type_env.vars.clone();
+            let mut ann_bindings: Vec<(String, ExprT)> = Vec::new();
+            for (name, be) in bindings {
+                let env_snapshot = TypeEnv { vars: new_vars.clone(), funs: type_env.funs.clone() };
+                let ann_bind = annotate_expr(be, &env_snapshot);
+                let (bt, _) = typecheck(be, &env_snapshot);
+                new_vars.insert(name.clone(), bt);
+                ann_bindings.push((name.clone(), ann_bind));
+            }
+            let new_env = TypeEnv { vars: new_vars.clone(), funs: type_env.funs.clone() };
+            let ann_body = annotate_expr(body, &new_env);
+            let (body_t, _) = typecheck(body, &new_env);
+            // convert bindings to Vec<(String, ExprT)>
+            let final_bindings = ann_bindings.into_iter().map(|(n,a)|(n,a)).collect::<Vec<(String, ExprT)>>();
+            Let(final_bindings, Box::new(ann_body), body_t)
+        }
+        Set(name, val, _) => {
+            let ann_val = annotate_expr(val, type_env);
+            let (e_t, _) = typecheck(val, type_env);
+            let var_t = type_env.lookup_var(name);
+            if !e_t.is_subtype_of(&var_t) {
+                panic!("Type Error: expected {:?} but found {:?} in set expression for variable {}", var_t, e_t, name);
+            }
+            Set(name.clone(), Box::new(ann_val), e_t)
+        }
+        UnOp(op, ex, _) => {
+            let ann_ex = annotate_expr(ex, type_env);
+            let (t, _) = typecheck(e, type_env);
+            UnOp(op.clone(), Box::new(ann_ex), t)
+        }
+        Print(ex, _) => {
+            let ann = annotate_expr(ex, type_env);
+            let (t, _) = typecheck(e, type_env);
+            Print(Box::new(ann), t)
+        }
+        BinOp(op, e1, e2, _) => {
+            let ann1 = annotate_expr(e1, type_env);
+            let ann2 = annotate_expr(e2, type_env);
+            let (t, _) = typecheck(e, type_env);
+            BinOp(op.clone(), Box::new(ann1), Box::new(ann2), t)
+        }
+        Cast(target_type, ex, _) => {
+            let ann = annotate_expr(ex, type_env);
+            let (t, _) = typecheck(e, type_env);
+            Cast(target_type.clone(), Box::new(ann), t)
+        }
+        Define(name, ex, _) => {
+            let ann = annotate_expr(ex, type_env);
+            let (t, _) = typecheck(e, type_env);
+            Define(name.clone(), Box::new(ann), t)
+        }
     }
+}
 
+// Annotate a Program (produce and replace with annotated expressions)
+// This function mutates `program` in-place to replace bodies and main with annotated copies.
+pub fn annotate_program(program: &mut Prog) {
     // build initial function environment from declared arg types and declared ret types
     let mut tenv = TypeEnv::new();
-    for def in &program.defs {
-        let arg_types = def.args.iter().map(|a| a.ann_type.clone()).collect::<Vec<_>>();
-        tenv.funs.insert(def.name.clone(), (arg_types, def.ret_type.clone()));
+    for def in &program.defns {
+        let arg_types = def.params.iter().map(|a| a.ann_type.clone()).collect::<Vec<_>>();
+        tenv.funs.insert(def.name.clone(), (arg_types, def.return_type.clone()));
     }
 
     // annotate each function body and update its return type based on typecheck
-    let mut new_defs: Vec<Definition> = Vec::new();
-    for def in &program.defs {
+    let mut new_defs: Vec<Defn> = Vec::new();
+    for def in &program.defns {
         let mut var_map = HashMap::new();
-        for a in def.args.iter() {
+        for a in def.params.iter() {
             var_map.insert(a.name.clone(), a.ann_type.clone());
         }
         let local_env = TypeEnv { vars: var_map, funs: tenv.funs.clone() };
-        let ann_body = annotate_expr(&def.body, &local_env)?;
-        let (ret_t, _ret_break) = typecheck(&def.body, &local_env)?;
+        let ann_body = annotate_expr(&def.body, &local_env);
+        let (ret_t, _ret_break) = typecheck(&def.body, &local_env);
         let mut new_def = def.clone();
-        new_def.body = ann_body;
-        new_def.ret_type = ret_t.clone();
+        new_def.body = Box::new(ann_body);
+        new_def.return_type = ret_t.clone();
         // update function env with inferred return type
-        let arg_types = new_def.args.iter().map(|a| a.ann_type.clone()).collect::<Vec<_>>();
+        let arg_types = new_def.params.iter().map(|a| a.ann_type.clone()).collect::<Vec<_>>();
         tenv.funs.insert(new_def.name.clone(), (arg_types, ret_t));
         new_defs.push(new_def);
     }
 
     // annotate main
     let global_env = TypeEnv { vars: HashMap::new(), funs: tenv.funs.clone() };
-    let ann_main = annotate_expr(&program.main, &global_env)?;
+    let ann_main = annotate_expr(&program.main, &global_env);
 
     // replace program contents
-    program.defs = new_defs;
-    program.main = ann_main;
-    Ok(())
+    program.defns = new_defs;
+    program.main = Box::new(ann_main);
 }
 
- pub fn annotate_expr(e: &Expr, type_env: &TypeEnv) -> Result<crate::syntax::Expr, String> {
+// Annotate expressions in-place with their computed return types.
+// Returns (expr_type, break_type) pair; mutates expr to update type annotation.
+pub fn typecheck(e: &ExprT, type_env: &TypeEnv) -> (TypeInfo, TypeInfo) {
     match e {
-        Expr::Number(_, n) => Ok(Expr::Number(Type::Num, *n)),
-        Expr::Boolean(_, b) => Ok(Expr::Boolean(Type::Bool, *b)),
-        Expr::Id(_, name) => {
-            let var_type = if name == "input" { Type::Any } else { type_env.lookup_var(name) };
-            Ok(Expr::Id(var_type, name.clone()))
-        }
-        Expr::Loop(_, body) => {
-            let annotated_body = annotate_expr(body, type_env)?;
-            let (t, _) = typecheck(e, type_env)?;
-            Ok(Expr::Loop(t, Box::new(annotated_body)))
-        }
-        Expr::Break(_, be) => {
-            let annotated_be = annotate_expr(be, type_env)?;
-            let (_t, _b) = typecheck(e, type_env)?;
-            Ok(Expr::Break(Type::Nothing, Box::new(annotated_be)))
-        }
-        Expr::Block(_, exprs) => {
-            let mut annotated = Vec::new();
-            for ex in exprs {
-                annotated.push(annotate_expr(ex, type_env)?);
-            }
-            // compute block type via typecheck
-            let (t, _b) = typecheck(e, type_env)?;
-            Ok(Expr::Block(t, annotated))
-        }
-        Expr::Call(_, name, args) => {
-            let mut ann_args = Vec::new();
-            for a in args {
-                ann_args.push(annotate_expr(a, type_env)?);
-            }
-            let (t, _b) = typecheck(e, type_env)?;
-            Ok(Expr::Call(t, name.clone(), ann_args))
-        }
-        Expr::If(_, cond, then_e, else_e) => {
-            let ann_cond = annotate_expr(cond, type_env)?;
-            let ann_then = annotate_expr(then_e, type_env)?;
-            let ann_else = annotate_expr(else_e, type_env)?;
-            let (t, _b) = typecheck(e, type_env)?;
-            Ok(Expr::If(t, Box::new(ann_cond), Box::new(ann_then), Box::new(ann_else)))
-        }
-        Expr::Let(_, bindings, body) => {
-            // incrementally annotate bindings similar to the typecheck behavior
-            let mut new_vars = type_env.vars.clone();
-            let mut ann_bindings: Vec<(String, crate::syntax::Expr)> = Vec::new();
-            for (name, be) in bindings {
-                let env_snapshot = TypeEnv { vars: new_vars.clone(), funs: type_env.funs.clone() };
-                let ann_bind = annotate_expr(be, &env_snapshot)?;
-                let (bt, _bb) = typecheck(be, &env_snapshot)?;
-                new_vars.insert(name.clone(), bt);
-                ann_bindings.push((name.clone(), ann_bind));
-            }
-            let new_env = TypeEnv { vars: new_vars.clone(), funs: type_env.funs.clone() };
-            let ann_body = annotate_expr(body, &new_env)?;
-            let (body_t, _bb) = typecheck(body, &new_env)?;
-            // convert bindings to Vec<(String, Expr)>
-            let final_bindings = ann_bindings.into_iter().map(|(n,a)|(n,a)).collect::<Vec<(String, crate::syntax::Expr)>>();
-            Ok(Expr::Let(body_t, final_bindings, Box::new(ann_body)))
-        }
-        Expr::Set(_, name, val) => {
-            let ann_val = annotate_expr(val, type_env)?;
-            let (e_t, _b) = typecheck(val, type_env)?;
-            let var_t = type_env.lookup_var(name);
-            if !e_t.is_subtype_of(&var_t) {
-                return Err(format!("Type Error: expected {:?} but found {:?} in set expression for variable {}", var_t, e_t, name));
-            }
-            Ok(Expr::Set(Type::Nothing, name.clone(), Box::new(ann_val)))
-        }
-        Expr::UnOp(_, op, ex) => {
-            let ann_ex = annotate_expr(ex, type_env)?;
-            let (t, _b) = typecheck(e, type_env)?;
-            Ok(Expr::UnOp(t, op.clone(), Box::new(ann_ex)))
-        }
-        Expr::BinOp(_, op, e1, e2) => {
-            let ann1 = annotate_expr(e1, type_env)?;
-            let ann2 = annotate_expr(e2, type_env)?;
-            let (t, _b) = typecheck(e, type_env)?;
-            Ok(Expr::BinOp(t, op.clone(), Box::new(ann1), Box::new(ann2)))
-        }
-        Expr::Cast(_, ex) => {
-            let ann = annotate_expr(ex, type_env)?;
-            let (t, _b) = typecheck(e, type_env)?;
-            Ok(Expr::Cast(t, Box::new(ann)))
-        }
-    }
-}
-
-pub fn typecheck(e: &Expr, type_env: &TypeEnv) -> Result<(Type, Type), String> {
-    match e {
-        Expr::Number(_, n) => {
-            Ok((Type::Num, Type::Nothing))
+        Number(n, _) => (TypeInfo::Num, TypeInfo::Nothing),
+        Boolean(b, _) => (TypeInfo::Bool, TypeInfo::Nothing),
+        Id(name, _) => (
+            if name == "input" { TypeInfo::Any } else { type_env.lookup_var(name) },
+            TypeInfo::Nothing
+        ),
+        Loop(body, _) => {
+            let (_, eb) = typecheck(body, type_env);
+            (eb, TypeInfo::Nothing)
         },
-        Expr::Boolean(_, b) => {
-            Ok((Type::Bool, Type::Nothing))
+        Break(e, _) => {
+            let (te, eb) = typecheck(e, type_env);
+            (TypeInfo::Nothing, te.union(&eb))
         },
-        Expr::Id(_, name) => {
-            let var_type = if name == "input" { Type::Any } else { type_env.lookup_var(name) };
-            Ok((var_type.clone(), Type::Nothing))
-        },
-        
-        Expr::Loop(_, body) => {
-            let (_, eb) = typecheck(body, type_env)?;
-            Ok((eb, Type::Nothing))
-        },
-        Expr::Break(_, e) => {
-            let (te, eb) = typecheck(e, type_env)?;
-            Ok((Type::Nothing, te.union(&eb)))
-        },
-        Expr::Block(_, exprs) => {
-            let mut block_type = Type::Nothing;
-            let mut block_break_type = Type::Nothing;
+        Block(exprs, _) => {
+            let mut block_type = TypeInfo::Nothing;
+            let mut block_break_type = TypeInfo::Nothing;
             for expr in exprs {
-                let (et, eb) = typecheck(expr, type_env)?;
+                let (et, eb) = typecheck(expr, type_env);
                 block_type = et;
                 block_break_type = block_break_type.union(&eb);
             }
-            Ok((block_type, block_break_type))
+            (block_type, block_break_type)
         },
 
-        Expr::Call(_, name, args) => {
+        FunCall(name, args, _) => {
             let (param_types, ret_type) = type_env.lookup_fun(name);
             if param_types.len() != args.len() {
-                return Err(format!("Type Error: expected {} arguments but found {} in call to function {}", param_types.len(), args.len(), name));
+                panic!("Type Error: expected {} arguments but found {} in call to function {}", param_types.len(), args.len(), name);
             }
             for (i, arg) in args.iter().enumerate() {
-                let (arg_type, _) = typecheck(arg, type_env)?;
+                let (arg_type, _) = typecheck(arg, type_env);
                 if !arg_type.is_subtype_of(&param_types[i]) {
-                    return Err(format!("Type Error: expected {:?} but found {:?} in argument {} of function {}", param_types[i], arg_type, i+1, name));
+                    panic!("Type Error: expected {:?} but found {:?} in argument {} of function {}", param_types[i], arg_type, i+1, name);
                 }
                 // ignore arg_break_type since breaks in arguments are not allowed
             }
-            Ok((ret_type, Type::Nothing))
+            (ret_type, TypeInfo::Nothing)
         }
 
-        Expr::If(_, cond, then_e, else_e) => {
-            let (cond_type, cond_break_type) = typecheck(cond, type_env)?;
-            if !cond_type.is_subtype_of(&Type::Bool) {
-                return Err(format!("Type Error: expected Bool but found {:?} in if condition", cond_type));
+        If(cond, then_e, else_e, _) => {
+            let (cond_type, cond_break_type) = typecheck(cond, type_env);
+            if !cond_type.is_subtype_of(&TypeInfo::Bool) {
+                panic!("Type Error: expected Bool but found {:?} in if condition", cond_type);
             }
-            let (then_type, then_break_type) = typecheck(then_e, type_env)?;
-            let (else_type, else_break_type) = typecheck(else_e, type_env)?;
+            let (then_type, then_break_type) = typecheck(then_e, type_env);
+            let (else_type, else_break_type) = typecheck(else_e, type_env);
 
-            /*if !then_type.is_subtype_of(t) {
-                return Err(format!("Type Error: expected {:?} but found {:?} in then branch", t, then_type));
-            }
-            if !else_type.is_subtype_of(t) {
-                return Err(format!("Type Error: expected {:?} but found {:?} in else branch", t, else_type));
-            }*/
-            Ok((then_type.union(&else_type), cond_break_type.union(&then_break_type).union(&else_break_type)))
+            (then_type.union(&else_type), cond_break_type.union(&then_break_type).union(&else_break_type))
         },
 
-        Expr::Let(t, bindings, body) => {
+        Let(bindings, body, t) => {
             let mut new_env = type_env.vars.clone();
-            let mut bindings_break_type = Type::Nothing;
+            let mut bindings_break_type = TypeInfo::Nothing;
             for (name, bind) in bindings {
-                let (bind_type, bind_break_type) = typecheck(bind, &TypeEnv {vars: new_env.clone(), funs: type_env.funs.clone()})?;
+                let (bind_type, bind_break_type) = typecheck(bind, &TypeEnv {vars: new_env.clone(), funs: type_env.funs.clone()});
                 new_env.insert(name.clone(), bind_type);
                 bindings_break_type = bindings_break_type.union(&bind_break_type);
             }
             let new_type_env = TypeEnv {vars: new_env, funs: type_env.funs.clone()};
-            let (body_type, body_break_type) = typecheck(body, &new_type_env)?;
+            let (body_type, body_break_type) = typecheck(body, &new_type_env);
             /*if !body_type.is_subtype_of(t) {
                 return Err(format!("Type Error: expected {:?} but found {:?} in let body", t, body_type));
             }*/
-            Ok((body_type, bindings_break_type.union(&body_break_type)))
+            (body_type, bindings_break_type.union(&body_break_type))
         },
 
-        Expr::Set(t, name, e) => {
-            let (e_type, e_break_type) = typecheck(e, type_env)?;
+        Set(name, e, t) => {
+            let (e_type, e_break_type) = typecheck(e, type_env);
             let var_type = type_env.lookup_var(name);
             if !e_type.is_subtype_of(&var_type) {
-                return Err(format!("Type Error: expected {:?} but found {:?} in set expression for variable {}", var_type, e_type, name));
+                panic!("Type Error: expected {:?} but found {:?} in set expression for variable {}", var_type, e_type, name);
             }
-            Ok((Type::Nothing, e_break_type))
+            (TypeInfo::Nothing, e_break_type)
         },
 
-        Expr::UnOp(t, op, e) => {
-            let (et, eb) = typecheck(e, type_env)?;
+        UnOp(op, e, t) => {
+            let (et, eb) = typecheck(e, type_env);
             match op {
                 Op1::Add1 | Op1::Sub1 => {
-                    if !et.is_subtype_of(&Type::Num) {
-                        return Err(format!("Type Error: expected Num but found {:?} in operand of {:?}", et, op));
+                    if !et.is_subtype_of(&TypeInfo::Num) {
+                        panic!("Type Error: expected Num but found {:?} in operand of {:?}", et, op);
                     }
-                    Ok((Type::Num, eb))
+                    (TypeInfo::Num, eb)
                 },
-                Op1::IsNum => Ok((Type::Bool, eb)),
-                Op1::IsBool => Ok((Type::Bool, eb)),
-                Op1::Print => Ok((et, eb)),
+                Op1::IsNum => (TypeInfo::Bool, eb),
+                Op1::IsBool => (TypeInfo::Bool, eb),
             }
         },
+        Print(e, _) => typecheck(e, type_env),
 
-        Expr::BinOp(t, op, e1, e2) => {
-            let (t1, b1) = typecheck(e1, type_env)?;
-            let (t2, b2) = typecheck(e2, type_env)?;
+        BinOp(op, e1, e2, t) => {
+            let (t1, b1) = typecheck(e1, type_env);
+            let (t2, b2) = typecheck(e2, type_env);
 
             match op {
                 Op2::Plus | Op2::Minus | Op2::Times => {
-                    if !t1.is_subtype_of(&Type::Num) {
-                        return Err(format!("Type Error: expected Num but found {:?} in left operand of {:?}", t1, op));
+                    if !t1.is_subtype_of(&TypeInfo::Num) {
+                        panic!("Type Error: expected Num but found {:?} in left operand of {:?}", t1, op);
                     }
-                    if !t2.is_subtype_of(&Type::Num) {
-                        return Err(format!("Type Error: expected Num but found {:?} in right operand of {:?}", t2, op));
+                    if !t2.is_subtype_of(&TypeInfo::Num) {
+                        panic!("Type Error: expected Num but found {:?} in right operand of {:?}", t2, op);
                     }
-                    Ok((Type::Num, b1.union(&b2)))
+                    (TypeInfo::Num, b1.union(&b2))
                 },
                 Op2::Less | Op2::LessEqual | Op2::Greater | Op2::GreaterEqual => {
-                    if !t1.is_subtype_of(&Type::Num) {
-                        return Err(format!("Type Error: expected Num but found {:?} in left operand of {:?}", t1, op));
+                    if !t1.is_subtype_of(&TypeInfo::Num) {
+                        panic!("Type Error: expected Num but found {:?} in left operand of {:?}", t1, op);
                     }
-                    if !t2.is_subtype_of(&Type::Num) {
-                        return Err(format!("Type Error: expected Num but found {:?} in right operand of {:?}", t2, op));
+                    if !t2.is_subtype_of(&TypeInfo::Num) {
+                        panic!("Type Error: expected Num but found {:?} in right operand of {:?}", t2, op);
                     }
-                    Ok((Type::Bool, b1.union(&b2)))
+                    (TypeInfo::Bool, b1.union(&b2))
                 },
                 Op2::Equal => {
-                    if !(t1.is_subtype_of(&Type::Num) && t2.is_subtype_of(&Type::Num)) &&
-                       !(t1.is_subtype_of(&Type::Bool) && t2.is_subtype_of(&Type::Bool)) {
-                        return Err(format!("Type Error: expected both operands of {:?} to be Num or Bool but found {:?} and {:?}", op, t1, t2));
+                    if !(t1.is_subtype_of(&TypeInfo::Num) && t2.is_subtype_of(&TypeInfo::Num)) &&
+                       !(t1.is_subtype_of(&TypeInfo::Bool) && t2.is_subtype_of(&TypeInfo::Bool)) {
+                        panic!("Type Error: expected both operands of {:?} to be Num or Bool but found {:?} and {:?}", op, t1, t2);
                     }
-                    Ok((Type::Bool, b1.union(&b2)))
+                    (TypeInfo::Bool, b1.union(&b2))
                 }
             }
         },
-        Expr::Cast(t, e) => {
-            let (et, eb) = typecheck(e, type_env)?;
+        Cast(target_type, e, t) => {
+            let (et, eb) = typecheck(e, type_env);
             if !t.is_subtype_of(&et) {
-                return Err(format!("Type Error: cannot cast {:?} to {:?}", et, t));
+                panic!("Type Error: cannot cast {:?} to {:?}", et, t);
             }
-            Ok((t.clone(), eb))
+            (t.clone(), eb)
         },
+        Define(_, e, _) => typecheck(e, type_env)
     }
 }
