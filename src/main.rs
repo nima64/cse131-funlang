@@ -77,6 +77,7 @@ fn run_aot(in_name: &str, out_name: &str, typecheck_enabled: bool) -> std::io::R
                 std::process::exit(1);
             }
         }
+        optimize_program(&mut prog);
     }
 
     let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t, false, typecheck_enabled);
@@ -208,6 +209,7 @@ fn run_repl(typecheck_enabled: bool) {
                         println!("Type Error: {}", err);
                     }
                 }
+                optimize_program(&mut prog);
             }
             else {
                 let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t, false, typecheck_enabled);

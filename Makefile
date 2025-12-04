@@ -13,6 +13,7 @@ export RUST_BACKTRACE=full
 # ARCH := macho64
 # RUST_TARGET := x86_64-apple-darwin
 # endif
+.PRECIOUS: tests/%.s
 
 target/$(RUST_TARGET)/debug/libadder.rlib: src/lib.rs src/types.rs src/assembly.rs src/common.rs
 	cargo build --target $(RUST_TARGET) --lib
@@ -26,7 +27,7 @@ tests/%.run: tests/%.s runtime/start.rs src/common.rs
 
 
 # Change below to whatever might be helpful! 
-MODE ?= -c
+MODE ?= -tc
 
 tests/%.s: tests/%.snek src/main.rs
 	cargo run --target $(RUST_TARGET) -- $(MODE) $< tests/$*.s
