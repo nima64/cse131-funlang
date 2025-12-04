@@ -23,7 +23,7 @@ use crate::typechecker::{type_check, type_check_prog};
 use crate::types::{Prog, TypeInfo};
 
 
-fn run_jit(in_name: &str, input_arg: &str) -> std::io::Result<()> {
+fn run_jit(in_name: &str, input_arg: &str, typecheck_enabled: bool) -> std::io::Result<()> {
     let input = parse_input(input_arg);
 
     let mut in_file = File::open(in_name)?;
@@ -34,7 +34,22 @@ fn run_jit(in_name: &str, input_arg: &str) -> std::io::Result<()> {
     in_contents = format!("({})", in_contents);
     let sexpr = parse(&in_contents).unwrap();
     let prog = parse_prog(&sexpr);
+    
+    let mut env_t = im::HashMap::new();
+    env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
     let mut define_env_t = std::collections::HashMap::new();
+
+    if typecheck_enabled {
+        match type_check_prog(&prog, &env_t, &mut define_env_t) {
+            Ok(_) => {},
+            Err(err) => {
+                eprintln!("{}", err);
+                std::process::exit(1);
+            }
+        }
+    }
+    
+
     let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t, true);
 
     let result = jit_code_input(&instrs, input);
@@ -42,7 +57,7 @@ fn run_jit(in_name: &str, input_arg: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-fn run_aot(in_name: &str, out_name: &str) -> std::io::Result<()> {
+fn run_aot(in_name: &str, out_name: &str, typecheck_enabled: bool) -> std::io::Result<()> {
     let mut in_file = File::open(in_name)?;
     let mut in_contents = String::new();
     in_file.read_to_string(&mut in_contents)?;
@@ -55,11 +70,13 @@ fn run_aot(in_name: &str, out_name: &str) -> std::io::Result<()> {
     env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
     let mut define_env_t = std::collections::HashMap::new();
 
-    match type_check_prog(&prog, &env_t, &mut define_env_t) {
-        Ok(_) => {},
-        Err(err) => {
-            eprintln!("{}", err);
-            std::process::exit(1);
+    if typecheck_enabled {
+        match type_check_prog(&prog, &env_t, &mut define_env_t) {
+            Ok(_) => {},
+            Err(err) => {
+                eprintln!("{}", err);
+                std::process::exit(1);
+            }
         }
     }
 
@@ -116,93 +133,6 @@ fn infer_input_type(input_arg: &str) -> TypeInfo {
     }
 }
 
-// Type check and compile (for -tc)
-fn run_tc(in_name: &str, out_name: &str) -> std::io::Result<()> {
-    let mut in_file = File::open(in_name)?;
-    let mut in_contents = String::new();
-    in_file.read_to_string(&mut in_contents)?;
-    in_contents = format!("({})", in_contents);
-
-    let sexpr = parse(&in_contents).unwrap();
-    let prog = parse_prog(&sexpr);
-
-    let mut env_t = im::HashMap::new();
-    env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
-    let mut define_env_t = std::collections::HashMap::new();
-
-    match type_check_prog(&prog, &env_t, &mut define_env_t) {
-        Ok(_) => {
-            run_aot(in_name, out_name)?;
-            Ok(())
-        }
-        Err(err) => {
-            eprintln!("{}", err);
-            std::process::exit(1);
-        }
-    }
-}
-
-// Type check with input type inference and run (for -te)
-fn run_te(in_name: &str, input_arg: &str) -> std::io::Result<()> {
-    let input = parse_input(input_arg);
-
-    let mut in_file = File::open(in_name)?;
-    let mut in_contents = String::new();
-    in_file.read_to_string(&mut in_contents)?;
-
-    in_contents = format!("({})", in_contents);
-    let sexpr = parse(&in_contents).unwrap();
-    let prog = parse_prog(&sexpr);
-
-    let input_type = infer_input_type(input_arg);
-    let mut env_t = im::HashMap::new();
-    env_t.insert("input".to_string(), Box::new(input_type));
-    let mut define_env_t = std::collections::HashMap::new();
-
-    match type_check_prog(&prog, &env_t, &mut define_env_t) {
-        Ok(_) => {},
-        Err(err) => {
-            eprintln!("{}", err);
-            std::process::exit(1);
-        }
-    }
-
-    let instrs = compile_prog(&prog, &mut im::HashMap::new(), &mut define_env_t, true);
-    let result = jit_code_input(&instrs, input);
-    println!("{}", format_result(result));
-    Ok(())
-}
-
-fn run_tg(in_name: &str, out_name: &str, input_arg: &str) -> std::io::Result<()> {
-    let input = parse_input(input_arg);
-
-    let mut in_file = File::open(in_name)?;
-    let mut in_contents = String::new();
-    in_file.read_to_string(&mut in_contents)?;
-    in_contents = format!("({})", in_contents);
-
-    let sexpr = parse(&in_contents).unwrap();
-    let prog = parse_prog(&sexpr);
-
-    let input_type = infer_input_type(input_arg);
-    let mut env_t = im::HashMap::new();
-    env_t.insert("input".to_string(), Box::new(input_type));
-    let mut define_env_t = std::collections::HashMap::new();
-
-    match type_check_prog(&prog, &env_t, &mut define_env_t) {
-        Ok(_) => {},
-        Err(err) => {
-            eprintln!("{}", err);
-            std::process::exit(1);
-        }
-    }
-
-    run_aot(in_name, out_name)?;
-
-    run_jit(in_name, input_arg)?;
-    Ok(())
-}
-
 // Just type check and print the type (for -t)
 fn run_t(in_name: &str) -> std::io::Result<()> {
     let mut in_file = File::open(in_name)?;
@@ -234,83 +164,7 @@ fn run_t(in_name: &str) -> std::io::Result<()> {
     }
 }
 
-// Type checking REPL (for -ti)
-fn run_ti() {
-    println!("repl in typed mode");
-    let mut repl_env: im::HashMap<String, Box<i64>> = im::HashMap::new();
-    let mut accumulated_defns: Vec<types::Defn> = vec![];
-    let mut define_env_t = std::collections::HashMap::new();
-
-    loop {
-        print!("> ");
-        io::stdout().flush().unwrap();
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
-
-        if input.trim() == "quit" {
-            break;
-        }
-
-        if input.trim().is_empty() {
-            continue;
-        }
-
-        input = format!("({})", input);
-
-        let sexpr = match parse(&input) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Parse error: {:?}", e);
-                continue;
-            }
-        };
-
-        let parsed_prog = parse_prog(&sexpr);
-
-        accumulated_defns.extend(parsed_prog.defns);
-
-        let prog = Prog {
-            defns: accumulated_defns.clone(),
-            main: parsed_prog.main,
-        };
-
-        let env_t = {
-            let mut env = im::HashMap::new();
-            env.insert("input".to_string(), Box::new(TypeInfo::Any));
-            env
-        };
-
-        // let mut temp_define_env_t = define_env_t.clone();
-
-
-        let panic_result = catch_unwind(AssertUnwindSafe(|| {
-            type_check_prog(&prog, &env_t, &mut define_env_t)
-        }));
-        match panic_result {
-            Ok(type_check_result) => {
-                match type_check_result {
-                    Ok(_) => {
-                        // define_env_t = temp_define_env_t;
-                        let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t, false);
-
-                        if !instrs.is_empty() {
-                            let result = jit_code(&instrs);
-                            println!("value: {}", format_result(result));
-                        }
-                    }
-                    Err(err) => {
-                        eprintln!("{}", err);
-                    }
-                }
-            }
-            Err(_) => {
-                // Panic occurred in type_check_prog, do nothing
-            }
-        }
-    }
-}
-
-fn run_repl() {
+fn run_repl(typecheck_enabled: bool) {
     println!("opening repl");
         let mut repl_env: im::HashMap<String, Box<i64>> = im::HashMap::new();
         let mut accumulated_defns: Vec<types::Defn> = vec![];
@@ -332,7 +186,13 @@ fn run_repl() {
 
             input = format!("({})", input);
 
-            let sexpr = parse(&input).unwrap();
+            let sexpr = match parse(&input) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Parse error: {:?}", e);
+                    continue;
+                }
+            };
             let parsed_prog = parse_prog(&sexpr);
 
             // Accumulate function definitions
@@ -344,11 +204,39 @@ fn run_repl() {
                 main: parsed_prog.main,
             };
 
-            let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t, false);
+            if typecheck_enabled {
+                let env_t = im::HashMap::new();
+                let panic_result = catch_unwind(AssertUnwindSafe(|| {
+                    type_check_prog(&prog, &env_t, &mut define_env_t)
+                }));
+                match panic_result {
+                    Ok(type_check_result) => {
+                        match type_check_result {
+                            Ok(_) => {
+                                // define_env_t = temp_define_env_t;
+                                let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t, false);
 
-            if !instrs.is_empty() {
-                let result = jit_code(&instrs);
-                println!("{}", format_result(result));
+                                if !instrs.is_empty() {
+                                    let result = jit_code(&instrs);
+                                    println!("value: {}", format_result(result));
+                                }
+                            }
+                            Err(err) => {
+                                eprintln!("{}", err);
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // Panic occurred in type_check_prog, do nothing
+                    }
+                }
+            }
+            else {
+                let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t, false);
+                if !instrs.is_empty() {
+                    let result = jit_code(&instrs);
+                    println!("{}", format_result(result));
+                }
             }
         }
 }
@@ -357,56 +245,37 @@ fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
 
     // Check for flags - type checking flags first
-    let use_tc = args.iter().any(|arg| arg == "-tc");
-    let use_tg = args.iter().any(|arg| arg == "-tg");
-    let use_te = args.iter().any(|arg| arg == "-te");
-    let use_ti = args.iter().any(|arg| arg == "-ti");
-    let use_t = args.iter().any(|arg| arg == "-t");
+    let enable_typecheck = args.iter().any(|arg| arg.starts_with("-t"));
 
     // Regular flags
-    let use_jit = args.iter().any(|arg| arg == "-e");
-    let use_aot = args.iter().any(|arg| arg == "-c");
-    let use_repl = args.iter().any(|arg| arg == "-i");
-    let use_g = args.iter().any(|arg| arg == "-g");
+    let use_jit = args.iter().any(|arg| arg == "-e" || arg == "-te");
+    let use_aot = args.iter().any(|arg| arg == "-c" || arg == "-tc");
+    let use_repl = args.iter().any(|arg| arg == "-i" || arg == "-ti");
+    let use_g = args.iter().any(|arg| arg == "-g" || arg == "-tg");
 
-    if use_tc {
-        let in_name = &args[2];
-        let out_name = &args[3];
-        run_tc(in_name, out_name)?;
-    } else if use_tg {
-        let in_name = &args[2];
-        let out_name = &args[3];
-        let input_arg = if args.len() >= 5 { &args[4] } else { "false" };
-        run_tg(in_name, out_name, input_arg)?;
-    } else if use_te {
-        let in_name = &args[2];
-        let input_arg = if args.len() >= 4 { &args[3] } else { "false" };
-        run_te(in_name, input_arg)?;
-    } else if use_ti {
-        run_ti();
-    } else if use_t {
-        let in_name = &args[2];
-        run_t(in_name)?;
-    } else if use_g {
+    if use_g {
         // Combined AOT + JIT compilation path (-g)
         let in_name = &args[2];
         let out_name = &args[3];
         let input_arg = if args.len() >= 5 { &args[4] } else { "false" };
 
-        run_aot(in_name, out_name)?;
-        run_jit(in_name, input_arg)?;
+        run_aot(in_name, out_name, enable_typecheck)?;
+        run_jit(in_name, input_arg, enable_typecheck)?;
     } else if use_jit {
         let in_name = &args[2];
         let input_arg = if args.len() >= 4 { &args[3] } else { "false" };
 
-        run_jit(in_name, input_arg)?;
+        run_jit(in_name, input_arg, enable_typecheck)?;
     } else if use_repl {
-        run_repl();
+        run_repl(enable_typecheck);
     } else if use_aot {
         let in_name = &args[2];
         let out_name = &args[3];
 
-        run_aot(in_name, out_name)?;
+        run_aot(in_name, out_name, enable_typecheck)?;
+    } else if enable_typecheck {
+        let in_name = &args[2];
+        run_t(in_name)?;
     }
     Ok(())
 }

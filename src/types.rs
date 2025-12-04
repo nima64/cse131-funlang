@@ -1,3 +1,5 @@
+use im::HashMap;
+
 /** Type Checker **/ 
 
 #[derive(Debug, Clone, PartialEq)]
@@ -8,8 +10,29 @@ pub enum TypeInfo{
     Any
 }
 
+impl TypeInfo {
+    pub fn is_subtype_of(&self, other: &TypeInfo) -> bool {
+        match (self, other) {
+            (_, TypeInfo::Any) => true,
+            (TypeInfo::Nothing, _) => true,
+            (TypeInfo::Num, TypeInfo::Num) => true,
+            (TypeInfo::Bool, TypeInfo::Bool) => true,
+            _ => false
+        }
+    }
+    pub fn union(&self, other: &TypeInfo) -> TypeInfo {
+        match (self, other) {
+            (TypeInfo::Any, _) | (_, TypeInfo::Any) => TypeInfo::Any,
+            (TypeInfo::Nothing, t) | (t, TypeInfo::Nothing) => t.clone(),
+            (TypeInfo::Num, TypeInfo::Num) => TypeInfo::Num,
+            (TypeInfo::Bool, TypeInfo::Bool) => TypeInfo::Bool,
+            _ => TypeInfo::Any,
+        }
+    }
+}
+
 // T ≤ T
-pub fn is_subtype(t1: &TypeInfo, t2: &TypeInfo) -> bool {
+/*pub fn is_subtype(t1: &TypeInfo, t2: &TypeInfo) -> bool {
     match (t1, t2) {
         (TypeInfo::Num,     TypeInfo::Num)
         | (TypeInfo::Bool,  TypeInfo::Bool)
@@ -20,9 +43,37 @@ pub fn is_subtype(t1: &TypeInfo, t2: &TypeInfo) -> bool {
         (TypeInfo::Nothing, _) => true,
         _ => false,
     }
+}*/
+
+pub struct TypeEnv {
+    pub vars: HashMap<String, TypeInfo>, // variable name to type
+    pub funs: HashMap<String, (Vec<TypeInfo>, TypeInfo)>, // funciton name to (arg types, return type)
 }
 
-#[derive(Debug)]
+impl TypeEnv {
+    pub fn new() -> Self {
+        TypeEnv {
+            vars: HashMap::new(),
+            funs: HashMap::new(),
+        }
+    }
+
+    pub fn lookup_var(&self, name: &String) -> TypeInfo {
+        match self.vars.get(name) {
+            Some(t) => t.clone(),
+            None => panic!("Variable {} not found in type environment", name),
+        }
+    }
+
+    pub fn lookup_fun(&self, name: &String) -> (Vec<TypeInfo>, TypeInfo) {
+        match self.funs.get(name) {
+            Some((arg_types, ret_type)) => (arg_types.clone(), ret_type.clone()),
+            None => panic!("Function {} not found in type environment", name),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum ExprT {
     Number(i64, TypeInfo),
     Boolean(bool, TypeInfo),
@@ -108,38 +159,17 @@ pub use crate::common::{
 };
 
 #[derive(Debug, Clone)]
-pub enum Expr {
-    // Num(i64),
-    Number(i64),
-    Boolean(bool),
-    Let(Vec<(String, Expr)>, Box<Expr>),
-    Id(String),
-    UnOp(Op1, Box<Expr>),
-    Define(String, Box<Expr>),
-    Block(Vec<Expr>),
-    BinOp(Op2, Box<Expr>, Box<Expr>),
-    If(Box<Expr>, Box<Expr>, Box<Expr>),
-    Loop(Box<Expr>),
-    Break(Box<Expr>),
-    Set(String, Box<Expr>),
-    FunCall(String, Vec<Expr>),
-    Print(Box<Expr>),
-    Cast(TypeInfo, Box<Expr>)
-
-}
-
-#[derive(Debug, Clone)]
 pub struct Defn {
     pub name: String,
     pub params: Vec<(String, Option<TypeInfo>)>, // (name, optional type annotation)
     pub return_type: Option<TypeInfo>, // optional return type annotation
-    pub body: Box<Expr>,
+    pub body: Box<ExprT>,
 }
 
 #[derive(Debug)]
 pub struct Prog {
     pub defns: Vec<Defn>,
-    pub main: Box<Expr>,
+    pub main: Box<ExprT>,
 }
 
 #[derive(Debug, Clone)]

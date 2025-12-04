@@ -7,40 +7,40 @@ use crate::common::*;
 use crate::types::*;
 
 
-pub fn parse_expr(s: &Sexp) -> Expr {
+pub fn parse_expr(s: &Sexp) -> ExprT {
     match s {
         Sexp::Atom(I(n)) => {
             if !(*n >= -2_i64.pow(62) && *n <= 2_i64.pow(62) - 1) {
                 panic!("not a valid number must be an integer between -2^62 and 2^62-1");
             }
-            Expr::Number(tag_number(*n))
+            ExprT::Number(tag_number(*n), TypeInfo::Any)
         }
         Sexp::Atom(S(name)) => {
             /* Check is boolean */
             if name == "true" {
-                return Expr::Boolean(true);
+                return ExprT::Boolean(true, TypeInfo::Any);
             } else if name == "false" {
-                return Expr::Boolean(false);
+                return ExprT::Boolean(false, TypeInfo::Any);
             }
-            Expr::Id(name.to_string())
+            ExprT::Id(name.to_string(), TypeInfo::Any)
         }
         Sexp::List(vec) => {
             match &vec[..] {
                 [Sexp::Atom(S(op)), e] if op == "add1" => {
-                    Expr::UnOp(Op1::Add1, Box::new(parse_expr(e)))
+                    ExprT::UnOp(Op1::Add1, Box::new(parse_expr(e)), TypeInfo::Any)
                 }
                 [Sexp::Atom(S(op)), e] if op == "sub1" => {
-                    Expr::UnOp(Op1::Sub1, Box::new(parse_expr(e)))
+                    ExprT::UnOp(Op1::Sub1, Box::new(parse_expr(e)), TypeInfo::Any)
                 }
                 [Sexp::Atom(S(op)), e] if op == "isnum" => {
-                    Expr::UnOp(Op1::IsNum, Box::new(parse_expr(e)))
+                    ExprT::UnOp(Op1::IsNum, Box::new(parse_expr(e)), TypeInfo::Any)
                 }
                 [Sexp::Atom(S(op)), e] if op == "isbool" => {
-                    Expr::UnOp(Op1::IsBool, Box::new(parse_expr(e)))
+                    ExprT::UnOp(Op1::IsBool, Box::new(parse_expr(e)), TypeInfo::Any)
                 }
-                [Sexp::Atom(S(op)), e] if op == "break" => Expr::Break(Box::new(parse_expr(e))),
-                [Sexp::Atom(S(op)), e] if op == "loop" => Expr::Loop(Box::new(parse_expr(e))),
-                [Sexp::Atom(S(op)), e] if op == "print" => Expr::Print(Box::new(parse_expr(e))),
+                [Sexp::Atom(S(op)), e] if op == "break" => ExprT::Break(Box::new(parse_expr(e)), TypeInfo::Any),
+                [Sexp::Atom(S(op)), e] if op == "loop" => ExprT::Loop(Box::new(parse_expr(e)), TypeInfo::Any),
+                [Sexp::Atom(S(op)), e] if op == "print" => ExprT::Print(Box::new(parse_expr(e)), TypeInfo::Any),
                 [Sexp::Atom(S(op)), Sexp::Atom(S(type_name)), e] if op == "cast" => {
                     let target_type = match type_name.as_str() {
                         "Num" => TypeInfo::Num,
@@ -49,58 +49,66 @@ pub fn parse_expr(s: &Sexp) -> Expr {
                         "Any" => TypeInfo::Any,
                         _ => panic!("Invalid type: {}", type_name),
                     };
-                    Expr::Cast(target_type, Box::new(parse_expr(e)))
+                    ExprT::Cast(target_type.clone(), Box::new(parse_expr(e)), target_type)
                 }
-                [Sexp::Atom(S(op)), e1, e2] if op == "+" => Expr::BinOp(
+                [Sexp::Atom(S(op)), e1, e2] if op == "+" => ExprT::BinOp(
                     Op2::Plus,
                     Box::new(parse_expr(e1)),
                     Box::new(parse_expr(e2)),
+                    TypeInfo::Any,
                 ),
-                [Sexp::Atom(S(op)), e1, e2] if op == "-" => Expr::BinOp(
+                [Sexp::Atom(S(op)), e1, e2] if op == "-" => ExprT::BinOp(
                     Op2::Minus,
                     Box::new(parse_expr(e1)),
                     Box::new(parse_expr(e2)),
+                    TypeInfo::Any,
                 ),
-                [Sexp::Atom(S(op)), e1, e2] if op == "*" => Expr::BinOp(
+                [Sexp::Atom(S(op)), e1, e2] if op == "*" => ExprT::BinOp(
                     Op2::Times,
                     Box::new(parse_expr(e1)),
                     Box::new(parse_expr(e2)),
+                    TypeInfo::Any,
                 ),
-                [Sexp::Atom(S(op)), e1, e2] if op == "<" => Expr::BinOp(
+                [Sexp::Atom(S(op)), e1, e2] if op == "<" => ExprT::BinOp(
                     Op2::Less,
                     Box::new(parse_expr(e1)),
                     Box::new(parse_expr(e2)),
+                    TypeInfo::Any,
                 ),
-                [Sexp::Atom(S(op)), e1, e2] if op == ">" => Expr::BinOp(
+                [Sexp::Atom(S(op)), e1, e2] if op == ">" => ExprT::BinOp(
                     Op2::Greater,
                     Box::new(parse_expr(e1)),
                     Box::new(parse_expr(e2)),
+                    TypeInfo::Any,
                 ),
-                [Sexp::Atom(S(op)), e1, e2] if op == "<=" => Expr::BinOp(
+                [Sexp::Atom(S(op)), e1, e2] if op == "<=" => ExprT::BinOp(
                     Op2::LessEqual,
                     Box::new(parse_expr(e1)),
                     Box::new(parse_expr(e2)),
+                    TypeInfo::Any,
                 ),
-                [Sexp::Atom(S(op)), e1, e2] if op == ">=" => Expr::BinOp(
+                [Sexp::Atom(S(op)), e1, e2] if op == ">=" => ExprT::BinOp(
                     Op2::GreaterEqual,
                     Box::new(parse_expr(e1)),
                     Box::new(parse_expr(e2)),
+                    TypeInfo::Any,
                 ),
-                [Sexp::Atom(S(op)), e1, e2] if op == "=" => Expr::BinOp(
+                [Sexp::Atom(S(op)), e1, e2] if op == "=" => ExprT::BinOp(
                     Op2::Equal,
                     Box::new(parse_expr(e1)),
                     Box::new(parse_expr(e2)),
+                    TypeInfo::Any,
                 ),
                 [Sexp::Atom(S(op)), exprs @ ..] if op == "block" => {
                     if exprs.is_empty() {
                         panic!("Invalid: block needs at least one expression");
                     }
-                    Expr::Block(exprs.iter().map(parse_expr).collect())
+                    ExprT::Block(exprs.iter().map(parse_expr).collect(), TypeInfo::Any)
                 }
 
                 [Sexp::Atom(S(op)), Sexp::List(bindings), body] if op == "let" => {
                     // Map each binding to (var_name, parsed_expr) tuple
-                    let parsed_bindings: Vec<(String, Expr)> = bindings
+                    let parsed_bindings: Vec<(String, ExprT)> = bindings
                         .iter()
                         .map(|binding| match binding {
                             Sexp::List(pair) => match &pair[..] {
@@ -111,25 +119,26 @@ pub fn parse_expr(s: &Sexp) -> Expr {
                         })
                         .collect();
 
-                    Expr::Let(parsed_bindings, Box::new(parse_expr(body)))
+                    ExprT::Let(parsed_bindings, Box::new(parse_expr(body)), TypeInfo::Any)
                 }
                 [Sexp::Atom(S(op)), Sexp::Atom(S(name)), e] if op == "define" => {
-                    Expr::Define(name.to_string(), Box::new(parse_expr(e)))
+                    ExprT::Define(name.to_string(), Box::new(parse_expr(e)), TypeInfo::Any)
                 }
                 [Sexp::Atom(S(op)), Sexp::Atom(S(name)), e] if op == "set!" => {
-                    Expr::Set(name.to_string(), Box::new(parse_expr(e)))
+                    ExprT::Set(name.to_string(), Box::new(parse_expr(e)), TypeInfo::Any)
                 }
 
-                [Sexp::Atom(S(op)), cond, then_expr, else_expr] if op == "if" => Expr::If(
+                [Sexp::Atom(S(op)), cond, then_expr, else_expr] if op == "if" => ExprT::If(
                     Box::new(parse_expr(cond)),
                     Box::new(parse_expr(then_expr)),
                     Box::new(parse_expr(else_expr)),
+                    TypeInfo::Any,
                 ),
 
                 // Function call: (<name> <expr>*)
                 [Sexp::Atom(S(name)), args @ ..] => {
                     let parsed_args = args.iter().map(|arg| parse_expr(arg)).collect();
-                    Expr::FunCall(name.to_string(), parsed_args)
+                    ExprT::FunCall(name.to_string(), parsed_args, TypeInfo::Any)
                 }
 
                 _ => panic!("parse error!"),
@@ -291,7 +300,7 @@ pub fn parse_prog(s: &Sexp) -> Prog {
                 defns,
                 main: Box::new(
                     main_expr
-                        .unwrap_or_else(|| Expr::Boolean(false)),
+                        .unwrap_or_else(|| ExprT::Boolean(false, TypeInfo::Any)),
                 ),
             }
         }
