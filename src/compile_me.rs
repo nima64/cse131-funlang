@@ -6,6 +6,7 @@ use dynasmrt::AssemblyOffset;
 use crate::types::{TypeInfo, Defn, is_number_tag, is_bool_tag, TypeEnv};
 use crate::typechecker::*;
 use dynasmrt::{dynasm, DynasmApi, DynasmLabelApi};
+use crate::optimizer::*;
 
 pub static GLOBAL_OPS: OnceLock<Mutex<dynasmrt::Assembler<dynasmrt::x64::X64Relocation>>> = OnceLock::new();
 
@@ -164,10 +165,11 @@ fn compile_me_inner(
         }
         let local_env = TypeEnv { vars: var_map, funs: tenv.funs.clone() };
         let typed_body = annotate_expr(&info.defn.body, &local_env, &mut HashMap::new());
+        let optimized_body = optimize(&typed_body, im::HashMap::new());
 
         // If function declared a return type, ensure compatible
         let expected = &info.defn.return_type;
-        let actual = typed_body.get_type_info();
+        let actual = optimized_body.get_type_info();
         if !actual.is_subtype_of(expected) {
             info.state = CompileState::OnlySlow;
             info.call_count = 1;
