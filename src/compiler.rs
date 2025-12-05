@@ -13,19 +13,19 @@ use crate::types::*;
 use crate::compile_me::*;
 
 #[derive(Clone)]
-struct CompileCtx {
-    loop_depth: i32,
-    current_loop_id: i32,
-    shared_ctx: Rc<RefCell<SharedCompileCtx>>,
-    defns: Rc<Vec<Defn>>,
-    env: HashMap<String, i32>
+pub struct CompileCtx {
+    pub loop_depth: i32,
+    pub current_loop_id: i32,
+    pub shared_ctx: Rc<RefCell<SharedCompileCtx>>,
+    pub defns: Rc<Vec<Defn>>,
+    pub env: HashMap<String, i32>
 }
 
-struct SharedCompileCtx{
-    label_counter: i32,
-    max_depth: i32,
-    max_outgoing_args: i32,
-    define_env: HashMap<String, Box<i64>>
+pub struct SharedCompileCtx{
+    pub label_counter: i32,
+    pub max_depth: i32,
+    pub max_outgoing_args: i32,
+    pub define_env: HashMap<String, Box<i64>>
 }
 
 fn check(instrs: &mut Vec<Instr>, condition: Condition) {
@@ -38,7 +38,7 @@ fn err_if(instrs: &mut Vec<Instr>, condition: Condition, err: RuntimeErr) {
     instrs.push(Instr::Jump(condition, err.to_string()));
 }
 
-fn compile_expr_define_env(
+pub fn compile_expr_define_env(
     e: &ExprT,
     stack_depth: i32,
     ctx: CompileCtx, // Pass by value (copied each call)
@@ -444,7 +444,7 @@ pub fn compile_prog(prog: &Prog, define_env: &mut HashMap<String, Box<i64>>, def
 
     for defn in &prog.defns {
         instrs.push(Instr::Label(defn.name.clone()));
-        if use_jit && typecheck_enabled {
+        if use_jit {
             instrs.extend(compile_defn_optimized(defn, ctx.clone(), define_env_t));
         } else {
             instrs.extend(compile_defn(defn, ctx.clone(), define_env_t));
@@ -653,6 +653,11 @@ fn compile_defn_optimized(defn: &Defn, mut ctx: CompileCtx, _define_env_t: &mut 
     instrs.push(Instr::Label(do_jump_label));
     // instrs.push(Instr::JmpReg(Reg::Rax));
     // Replaced with push/ret to avoid JmpReg
+    
+    // Clean up stack frame before jumping to JIT code
+    instrs.push(Instr::MovReg(Reg::Rsp, Reg::Rbp));
+    instrs.push(Instr::Pop(Reg::Rbp));
+    
     instrs.push(Instr::Push(Reg::Rax));
     instrs.push(Instr::Ret);
 
