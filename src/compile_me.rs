@@ -85,6 +85,7 @@ pub fn record_function(defn: &Defn) -> u64 {
 
 #[no_mangle]
 pub extern "C" fn compile_me(id: u64, args_ptr: *const i64, count: u64, slow_path_addr: u64) -> u64 {
+    eprintln!("compile_me called with id={}, args_ptr={:?}, count={}, slow_path_addr=0x{:x}", id, args_ptr, count, slow_path_addr);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         compile_me_inner(id, args_ptr, count, slow_path_addr)
     }));
@@ -113,6 +114,8 @@ fn compile_me_inner(
 ) -> u64 {
     use std::collections::HashMap as StdHashMap;
 
+    let jit_debug = std::env::var_os("FUNLANG_JIT_DEBUG").is_some();
+
 
     let mut map = registry().lock().unwrap();
 
@@ -123,26 +126,52 @@ fn compile_me_inner(
     let defns: Vec<Defn> = map.values().map(|info| info.defn.clone()).collect();
     let info = map.get_mut(&id).unwrap();
     let call_count = info.call_count;
+    let call_number = call_count + 1;
+
+    // Read args once for logging and possible specialization
+    let args = unsafe { std::slice::from_raw_parts(args_ptr, count as usize) };
+
+    // Infer runtime param types from tags (used for guards and logging)
+    let mut inferred_types = Vec::new();
+    for &val in args {
+        inferred_types.push(
+            if is_number_tag(val) { TypeInfo::Num }
+            else if is_bool_tag(val) { TypeInfo::Bool }
+            else { TypeInfo::Any }
+        );
+    }
+
+    if jit_debug {
+        let mut tags = Vec::new();
+        for a in args {
+            if is_number_tag(*a) { tags.push("Num".to_string()); }
+            else if is_bool_tag(*a) { tags.push("Bool".to_string()); }
+            else { tags.push("Any".to_string()); }
+        }
+        eprintln!("[jit][call {}] args tags: {}", call_number, tags.join(" "));
+
+        let inferred = inferred_types
+            .iter()
+            .map(|t| format!("{:?}", t))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let annotated = info.defn.params
+            .iter()
+            .map(|p| format!("{}:{:?}", p.name, p.ann_type))
+            .collect::<Vec<_>>()
+            .join(", ");
+        eprintln!("[jit][call {}] inferred param types: [{}] | annotated: [{}]", call_number, inferred, annotated);
+    }
 
     /* ===================================================================
        FIRST CALL — SPECIALIZATION + TYPECHECK + OPTIMIZATION + JIT BUILD
     =================================================================== */
     if call_count == 0 {
 
-        // --- 1. Read args ------------------------------------------------
-        let args = unsafe { std::slice::from_raw_parts(args_ptr, count as usize) };
-
-        // --- 2. Infer types only for guards ------------------------------
-        let mut inferred_types = Vec::new();
-        for &val in args {
-            inferred_types.push(
-                if is_number_tag(val) { TypeInfo::Num }
-                else if is_bool_tag(val) { TypeInfo::Bool }
-                else { TypeInfo::Any }
-            );
-        }
-
         if info.defn.params.len() != inferred_types.len() {
+            if jit_debug {
+                eprintln!("[jit][call {}] arity mismatch (expected {}, got {}) → slow path", call_number, info.defn.params.len(), inferred_types.len());
+            }
             info.state = CompileState::OnlySlow;
             info.call_count = 1;
             return 0;
@@ -175,6 +204,9 @@ fn compile_me_inner(
         let typed_body = match typed_body {
             Ok(tb) => tb,
             Err(_) => {
+                if jit_debug {
+                    eprintln!("[jit][call {}] type error during specialization → slow path", call_number);
+                }
                 info.state = CompileState::OnlySlow;
                 info.call_count = 1;
                 return 0;
@@ -186,6 +218,9 @@ fn compile_me_inner(
         // --- 5. Return type check ----------------------------------------
         let actual = optimized_body.get_type_info();
         if !actual.is_subtype_of(&info.defn.return_type) {
+            if jit_debug {
+                eprintln!("[jit][call {}] return type mismatch {:?} vs {:?} → slow path", call_number, actual, info.defn.return_type);
+            }
             info.state = CompileState::OnlySlow;
             info.call_count = 1;
             return 0;
@@ -194,6 +229,10 @@ fn compile_me_inner(
         // --- 6. Begin JIT code emission ----------------------------------
         info.recorded_args = Some(inferred_types.clone());
         info.state = CompileState::FastAvailable;
+
+        if jit_debug {
+            eprintln!("[jit][call {}] first call to `{}` (id={}) — building fast path", call_number, info.defn.name, id);
+        }
 
         let mut ops_guard = get_global_ops().lock().unwrap();
         let mut ops = std::mem::replace(
@@ -261,6 +300,16 @@ fn compile_me_inner(
 
         let instrs = compile_expr_define_env(&optimized_body, 8, ctx);
 
+        if jit_debug {
+            eprintln!(
+                "[jit][call {}] fast-path IR for `{}` ({} instrs):\n{}",
+                call_number,
+                info.defn.name,
+                instrs.len(),
+                crate::assembly::instrs_to_string(&instrs)
+            );
+        }
+
 
         for instr in &instrs {
             match instr {
@@ -316,14 +365,32 @@ fn compile_me_inner(
             Ok(buf) => {
                 let fast_ptr = buf.ptr(AssemblyOffset(0)) as u64;
                 info.fast_addr = Some(fast_ptr);
+                if jit_debug {
+                    eprintln!("[jit][call {}] fast path ready for `{}` at 0x{:x}", call_number, info.defn.name, fast_ptr);
+                }
                 std::mem::forget(buf);
             }
             Err(_e) => {
+                if jit_debug {
+                    eprintln!("[jit][call {}] assembler error → slow path", call_number);
+                }
                 info.state = CompileState::OnlySlow;
             }
         }
 
         info.call_count = 1;
+        if jit_debug {
+            match info.state {
+                CompileState::FastAvailable => {
+                    let addr = info.fast_addr.unwrap_or(0);
+                    eprintln!("[jit][call {}] first call returns slow (building) — fast path installed at 0x{:x}", call_number, addr);
+                }
+                CompileState::OnlySlow => {
+                    eprintln!("[jit][call {}] first call returns slow — fast path unavailable", call_number);
+                }
+                CompileState::NotCompiled => {}
+            }
+        }
         return 0;
     }
 
@@ -334,10 +401,20 @@ fn compile_me_inner(
 
     match info.state {
         CompileState::OnlySlow => {
+            if jit_debug {
+                eprintln!("[jit][call {}] slow path (state=OnlySlow)", call_number);
+            }
             0
         }
         CompileState::FastAvailable => {
             let addr = info.fast_addr.unwrap_or(0);
+            if jit_debug {
+                if addr == 0 {
+                    eprintln!("[jit][call {}] fast path unavailable (addr=0) → fallback slow", call_number);
+                } else {
+                    eprintln!("[jit][call {}] fast path at 0x{:x}", call_number, addr);
+                }
+            }
             addr
         }
         CompileState::NotCompiled => unreachable!(),
