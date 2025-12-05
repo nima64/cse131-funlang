@@ -27,7 +27,7 @@ tests/%.run: tests/%.s runtime/start.rs src/common.rs
 
 
 # Change below to whatever might be helpful! 
-MODE ?= -g
+MODE ?= -tg
 
 tests/%.s: tests/%.snek src/main.rs
 	cargo run --target $(RUST_TARGET) -- $(MODE) $< tests/$*.s

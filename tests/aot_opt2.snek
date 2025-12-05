@@ -1,0 +1,1 @@
+(let ((n 7)) (if (isnum (cast Num n)) (add1 n) (print n)))
