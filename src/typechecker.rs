@@ -95,11 +95,11 @@ pub fn annotate_expr(e: &ExprT, type_env: &TypeEnv, global_var_env: &mut HashMap
             Cast(target_type.clone(), Box::new(ann), t)
         }
         Define(name, ex, _) => {
-            //let ann = annotate_expr(ex, type_env, global_var_env);
+            let ann = annotate_expr(ex, type_env, global_var_env);
             let (t, _) = typecheck(ex, type_env);
             // Add to global_var_env
             global_var_env.insert(name.clone(), t.clone());
-            Define(name.clone(), ex.clone(), t)
+            Define(name.clone(), Box::new(ann), t)
         }
     }
 }

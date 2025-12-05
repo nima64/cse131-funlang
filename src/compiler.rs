@@ -60,7 +60,7 @@ fn compile_expr_define_env(
                 vec![Instr::MovFromStack(Reg::Rax, *offset)]
             // If not in env, check repl_env for defined variables
             } else if let Some(boxed_value) = ctx.shared_ctx.borrow().define_env.get(name) {
-                println!("value held in {}: {}", name, untag_number(**boxed_value));
+                //println!("value held in {}: {}", name, untag_number(**boxed_value));
                 let addr = boxed_value.as_ref() as *const i64 as i64;
                 vec![Instr::Mov(Reg::Rax, addr),
                     Instr::MovDeref(Reg::Rax, Reg::Rax)
@@ -200,7 +200,7 @@ fn compile_expr_define_env(
             let mut shared = ctx.shared_ctx.borrow_mut();
             if !shared.define_env.contains_key(name) {
                 shared.define_env.insert(name.clone(), boxed_val);
-                print!("inserted {}", name.clone());
+                println!("inserted {}", name.clone());
             } else {
                 println!("Duplicate binding");
             }
@@ -703,6 +703,7 @@ pub fn jit_code_input(instrs: &Vec<Instr>, input: i64) -> i64 {
     }
 
     for instr in instrs {
+        println!("{}", instr_to_string(instr));
         instr_to_asm(instr, &mut ops, &labels);
     }
 
