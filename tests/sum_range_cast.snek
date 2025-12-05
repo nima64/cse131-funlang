@@ -1,0 +1,21 @@
+(fun (sumrange start stop step)
+  (let ((step (if (isbool step)
+                  (if (= (cast Bool step) true) 1 -1)
+                  (cast Num step)))   
+        (res 0)
+        (curr (cast Num start))        
+        (stopn (cast Num stop)))       
+    (loop
+      (if (if (> step 0)
+              (>= curr stopn)
+              (<= curr stopn))
+          (break res)
+          (block
+            (set! res (+ res curr))
+            (set! curr (+ curr step)))))))
+          
+(block
+ (print (sumrange 3 10 1))
+ (print (sumrange 10 3 false))
+ (print (sumrange 10 3 -1))
+ (print (sumrange true false 1)))

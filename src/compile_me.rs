@@ -1,12 +1,15 @@
-// ...existing code...
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use dynasmrt::AssemblyOffset;
-use crate::types::{TypeInfo, Defn, is_number_tag, is_bool_tag, TypeEnv};
+use crate::types::{TypeInfo, Defn, is_number_tag, is_bool_tag, TypeEnv, Instr};
 use crate::typechecker::*;
 use dynasmrt::{dynasm, DynasmApi, DynasmLabelApi};
 use crate::optimizer::*;
+use crate::compiler::{compile_expr_define_env, CompileCtx, SharedCompileCtx};
+use crate::assembly::{instr_to_asm};
+use std::rc::Rc;
+use std::cell::RefCell;
 
 pub static GLOBAL_OPS: OnceLock<Mutex<dynasmrt::Assembler<dynasmrt::x64::X64Relocation>>> = OnceLock::new();
 
@@ -81,12 +84,6 @@ pub fn record_function(defn: &Defn) -> u64 {
 }
 
 #[no_mangle]
-pub extern "C" fn print_fast_msg() {
-    //TODO: replace with real faster version
-    eprintln!("this is fast version");
-}
-
-#[no_mangle]
 pub extern "C" fn compile_me(id: u64, args_ptr: *const i64, count: u64, slow_path_addr: u64) -> u64 {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         compile_me_inner(id, args_ptr, count, slow_path_addr)
@@ -106,181 +103,243 @@ pub extern "C" fn compile_me(id: u64, args_ptr: *const i64, count: u64, slow_pat
         }
     }
 }
+
+
 fn compile_me_inner(
     id: u64,
     args_ptr: *const i64,
     count: u64,
     slow_path_addr: u64,
 ) -> u64 {
+    use std::collections::HashMap as StdHashMap;
+
+
     let mut map = registry().lock().unwrap();
-    
+
     if !map.contains_key(&id) {
         return 0;
     }
 
-    let call_count = map.get(&id).unwrap().call_count;
+    let defns: Vec<Defn> = map.values().map(|info| info.defn.clone()).collect();
+    let info = map.get_mut(&id).unwrap();
+    let call_count = info.call_count;
 
-    /* ============================================
-       Case 1: First call — MUST type-check
-    ============================================ */
+    /* ===================================================================
+       FIRST CALL — SPECIALIZATION + TYPECHECK + OPTIMIZATION + JIT BUILD
+    =================================================================== */
     if call_count == 0 {
-        // Collect all definitions for type checking (requires immutable borrow of map)
-        let defns: Vec<Defn> = map.values().map(|info| info.defn.clone()).collect();
-        
-        // Now get mutable reference to info
-        let info = map.get_mut(&id).unwrap();
 
-        // Read raw argument values
+        // --- 1. Read args ------------------------------------------------
         let args = unsafe { std::slice::from_raw_parts(args_ptr, count as usize) };
 
-        // Infer argument types from tags
-        let mut inferred_types: Vec<TypeInfo> = Vec::new();
+        // --- 2. Infer types only for guards ------------------------------
+        let mut inferred_types = Vec::new();
         for &val in args {
-            let t = if is_number_tag(val) {
-                TypeInfo::Num
-            } else if is_bool_tag(val) {
-                TypeInfo::Bool
-            } else {
-                TypeInfo::Any
-            };
-            inferred_types.push(t);
+            inferred_types.push(
+                if is_number_tag(val) { TypeInfo::Num }
+                else if is_bool_tag(val) { TypeInfo::Bool }
+                else { TypeInfo::Any }
+            );
         }
 
-
-        // Check arity
         if info.defn.params.len() != inferred_types.len() {
-           
-            info.state = CompileState::OnlySlow;
-            info.call_count = 1;
-            return 0;   // must still use slow version
-        }
-
-        // Build type env
-        let mut tenv = TypeEnv::new();
-        tenv.funs.insert(info.defn.name.clone(), (inferred_types.clone(), info.defn.return_type.clone()));
-
-        let mut var_map = HashMap::new();
-        for a in info.defn.params.iter() {
-            var_map.insert(a.name.clone(), a.ann_type.clone());
-        }
-    let local_env = TypeEnv { vars: var_map, funs: tenv.funs.clone(), input_type: TypeInfo::Any };
-        let typed_body = annotate_expr(&info.defn.body, &local_env, &mut HashMap::new());
-        let optimized_body = optimize(&typed_body, im::HashMap::new());
-
-        // If function declared a return type, ensure compatible
-        let expected = &info.defn.return_type;
-        let actual = optimized_body.get_type_info();
-        if !actual.is_subtype_of(expected) {
             info.state = CompileState::OnlySlow;
             info.call_count = 1;
             return 0;
         }
 
-        // All good — so generate fast version
+        // --- 3. Build TypeEnv from ORIGINAL annotations ------------------
+        let mut var_map = StdHashMap::new();
+        let mut fun_arg_types = Vec::new();
+        for param in &info.defn.params {
+            var_map.insert(param.name.clone(), param.ann_type.clone());
+            fun_arg_types.push(param.ann_type.clone());
+        }
+
+        let mut tenv = TypeEnv::new();
+        tenv.funs
+            .insert(info.defn.name.clone(), (fun_arg_types, info.defn.return_type.clone()));
+
+        let local_env = TypeEnv {
+            vars: var_map,
+            funs: tenv.funs.clone(),
+            input_type: TypeInfo::Any,
+        };
+
+        // --- 4. Annotate, typecheck, optimize ----------------------------
+
+        let typed_body = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            annotate_expr(&info.defn.body, &local_env, &mut StdHashMap::new())
+        }));
+
+        let typed_body = match typed_body {
+            Ok(tb) => tb,
+            Err(_) => {
+                info.state = CompileState::OnlySlow;
+                info.call_count = 1;
+                return 0;
+            }
+        };
+
+        let optimized_body = optimize(&typed_body, im::HashMap::new());
+
+        // --- 5. Return type check ----------------------------------------
+        let actual = optimized_body.get_type_info();
+        if !actual.is_subtype_of(&info.defn.return_type) {
+            info.state = CompileState::OnlySlow;
+            info.call_count = 1;
+            return 0;
+        }
+
+        // --- 6. Begin JIT code emission ----------------------------------
         info.recorded_args = Some(inferred_types.clone());
         info.state = CompileState::FastAvailable;
 
-
-        // ----------- Fast code generation ---------------------
         let mut ops_guard = get_global_ops().lock().unwrap();
-        let mut ops = std::mem::replace(&mut *ops_guard, dynasmrt::x64::Assembler::new().unwrap());
+        let mut ops = std::mem::replace(
+            &mut *ops_guard,
+            dynasmrt::x64::Assembler::new().unwrap(),
+        );
 
-        let print_fast_ptr = print_fast_msg as *const ();
         let slow_addr_i64 = slow_path_addr as i64;
-        
-        // Generate type guards
+        let slow_lbl = ops.new_dynamic_label();
+        let print_lbl = ops.new_dynamic_label();
+        let entry_label = ops.new_dynamic_label();
+        let print_fun_addr = crate::common::print_fun as *const () as i64;
+
+        dynasm!(ops
+            ; .arch x64
+            ; =>entry_label
+            ; push rbp
+            ; mov rbp, rsp
+        );
+
+        // --- Emit guards --------------------------------------------------
         for (i, arg_type) in inferred_types.iter().enumerate() {
-            let offset = (16 + i * 8) as i32;  // [rbp + 16], [rbp + 24], ...
+            let offset = (16 + i * 8) as i32;
 
             dynasm!(ops
-                ; .arch x64
                 ; mov rax, [rbp + offset]
                 ; test rax, 1
             );
 
             match arg_type {
-                TypeInfo::Num => {         // expect tag 0 → (LSB == 0)
-                    dynasm!(ops ; jnz ->slow);
-                },
-                TypeInfo::Bool => {       // expect tag 1 → (LSB == 1)
-                    dynasm!(ops ; jz ->slow);
-                },
-                _ => {} // ANY → no guard
+                TypeInfo::Num => dynasm!(ops ; jnz =>slow_lbl),
+                TypeInfo::Bool => dynasm!(ops ; jz  =>slow_lbl),
+                _ => {}
             }
         }
 
-        // If passes all guards, jump into slow for now (we don't inline body!)
-        
+        // --- Lower optimized body ----------------------------------------
+        let shared_ctx = Rc::new(RefCell::new(SharedCompileCtx {
+            label_counter: 0,
+            max_depth: 0,
+            max_outgoing_args: 0,
+            define_env: im::HashMap::new(),
+        }));
+
+        let mut env = im::HashMap::new();
+        for (i, param) in info.defn.params.iter().enumerate() {
+            env.insert(param.name.clone(), -(16 + (i * 8) as i32));
+        }
+
+        let ctx = CompileCtx {
+            loop_depth: 0,
+            current_loop_id: -1,
+            shared_ctx: shared_ctx.clone(),
+            defns: Rc::new(defns),
+            env,
+        };
+
+        let mut labels = im::HashMap::new();
+        labels.insert(info.defn.name.clone(), entry_label);
+        labels.insert("type_mismatch_error".to_string(), slow_lbl);
+        labels.insert("overflow_error".to_string(), slow_lbl);
+        labels.insert("type_error_arithmetic".to_string(), slow_lbl);
+        labels.insert("bad_cast_error".to_string(), slow_lbl);
+        labels.insert("print_fun_external".to_string(), print_lbl);
+
+        let instrs = compile_expr_define_env(&optimized_body, 8, ctx);
+
+
+        for instr in &instrs {
+            match instr {
+                Instr::Label(name)
+                | Instr::Call(name)
+                | Instr::Jump(_, name)
+                | Instr::LeaLabel(_, name) => {
+                    if !labels.contains_key(name) {
+                        labels.insert(name.clone(), ops.new_dynamic_label());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // compute stack frame size
+        let (max_depth, max_outgoing) = {
+            let shared = shared_ctx.borrow();
+            (shared.max_depth, shared.max_outgoing_args)
+        };
+
+        let total_size = max_depth + (max_outgoing * 8);
+        let frame_size = ((total_size + 15) / 16) * 16;
+
+        if frame_size > 0 {
+            dynasm!(ops ; sub rsp, frame_size);
+        }
+
+        // emit instructions
+        for instr in &instrs {
+            instr_to_asm(instr, &mut ops, &labels);
+        }
+
         dynasm!(ops
-            ; .arch x64
-            ; push rbp
-            ; mov rbp, rsp
-            ; and rsp, -16
-            ; mov rax, QWORD print_fast_ptr as i64
-            ; call rax
             ; mov rsp, rbp
             ; pop rbp
-            ; jmp ->slow
-            ; ->slow:
+            ; ret
+
+            ; =>slow_lbl
             ; mov rax, QWORD slow_addr_i64
             ; jmp rax
-        );
-        //TODO: when optimization finished, use this version
-        //  dynasm!(ops
-        //     ; .arch x64
-        //     ; push rbp
-        //     ; mov rbp, rsp
-        //     ; and rsp, -16
-        //     ; mov rax, QWORD print_fast_ptr as i64
-        //     ; call rax
-        //     ; mov rsp, rbp
-        //     ; pop rbp
-        //     ; ->slow:
-        //     ; mov rax, QWORD slow_addr_i64
-        //     ; jmp rax
-        // );
 
-        // Commit code
+            ; =>print_lbl
+            ; mov rax, QWORD print_fun_addr
+            ; sub rsp, 8
+            ; call rax
+            ; add rsp, 8
+            ; ret
+        );
+
+        // finalize
         match ops.finalize() {
             Ok(buf) => {
                 let fast_ptr = buf.ptr(AssemblyOffset(0)) as u64;
                 info.fast_addr = Some(fast_ptr);
                 std::mem::forget(buf);
             }
-            Err(e) => {
-                eprintln!("  assembler error: {:?}", e);
+            Err(_e) => {
                 info.state = CompileState::OnlySlow;
             }
         }
 
         info.call_count = 1;
-
-        /* ************************************************************
-           IMPORTANT RULE OF THE ASSIGNMENT:
-           First call ALWAYS returns 0 → stub uses slow path for THIS CALL
-        ************************************************************ */
         return 0;
     }
 
-    /* ============================================
-       Case 2: Later calls
-    ============================================ */
-    let info = map.get_mut(&id).unwrap();
+    /* ===================================================================
+       SUBSEQUENT CALLS — USE FAST VERSION IF AVAILABLE
+    =================================================================== */
     info.call_count += 1;
 
     match info.state {
         CompileState::OnlySlow => {
-            // Always slow
-            return 0;
+            0
         }
         CompileState::FastAvailable => {
-            let fast = info.fast_addr.unwrap_or(0);
-            if fast == 0 {
-                return 0; // fallback
-            }
-
-            return fast;
+            let addr = info.fast_addr.unwrap_or(0);
+            addr
         }
-        CompileState::NotCompiled => unreachable!("cannot reach here"),
+        CompileState::NotCompiled => unreachable!(),
     }
 }
