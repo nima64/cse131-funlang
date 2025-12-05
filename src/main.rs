@@ -23,7 +23,7 @@ use crate::optimizer::*;
 
 
 fn run_jit(in_name: &str, input_arg: &str, typecheck_enabled: bool) -> std::io::Result<()> {
-    let input = parse_input(input_arg);
+    let (input, input_type) = infer_input_type(input_arg);
 
     let mut in_file = File::open(in_name)?;
     let mut in_contents = String::new();
@@ -34,12 +34,10 @@ fn run_jit(in_name: &str, input_arg: &str, typecheck_enabled: bool) -> std::io::
     let sexpr = parse(&in_contents).unwrap();
     let mut prog = parse_prog(&sexpr);
     
-    let mut env_t = im::HashMap::new();
-    env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
     let mut define_env_t = std::collections::HashMap::new();
 
     if typecheck_enabled {
-        match annotate_program(&mut prog, &mut HashMap::new()) {
+        match annotate_program(&mut prog, &mut HashMap::new(), input_type.clone()) {
             Ok(_) => {},
             Err(err) => {
                 eprintln!("Type Error: {}", err);
@@ -70,7 +68,7 @@ fn run_aot(in_name: &str, out_name: &str, typecheck_enabled: bool) -> std::io::R
     let mut define_env_t = std::collections::HashMap::new();
 
     if typecheck_enabled {
-        match annotate_program(&mut prog, &mut HashMap::new()) {
+        match annotate_program(&mut prog, &mut HashMap::new(), TypeInfo::Any) {
             Ok(_) => {},
             Err(err) => {
                 eprintln!("Type Error: {}", err);
@@ -123,14 +121,16 @@ done:
 }
 
 // Infer the type of input based on its value
-fn infer_input_type(input_arg: &str) -> TypeInfo {
+fn infer_input_type(input_arg: &str) -> (i64, TypeInfo) {
     let input = parse_input(input_arg);
+    let mut t = TypeInfo::Any;
     // Check if it's a boolean (tagged with 1 in lower bit)
     if (input & 1) == 1 {
-        TypeInfo::Bool
+        t = TypeInfo::Bool;
     } else {
-        TypeInfo::Num
+        t = TypeInfo::Num;
     }
+    (input, t)
 }
 
 // Just type check and print the type (for -t)
@@ -147,9 +147,9 @@ fn run_t(in_name: &str) -> std::io::Result<()> {
     env_t.insert("input".to_string(), Box::new(TypeInfo::Any));
     // let mut define_env_t = std::collections::HashMap::new();
 
-    match annotate_program(&mut prog, &mut HashMap::new()) {
+    match annotate_program(&mut prog, &mut HashMap::new(), TypeInfo::Any) {
         Ok(_) => {println!("{:?}", &prog.main.get_type_info()); return Ok(())},
-        Err(err) => {eprintln!("Type Error: {}", err); return Ok(());}
+        Err(err) => {eprintln!("Type Error: {}", err); return Ok(());}    
     }
 }
 
@@ -195,7 +195,7 @@ fn run_repl(typecheck_enabled: bool) {
             };
 
             if typecheck_enabled {
-                match annotate_program(&mut prog, &mut global_var_env) {
+                match annotate_program(&mut prog, &mut global_var_env, TypeInfo::Any) {
                     Ok(_) => {
                         // define_env_t = temp_define_env_t;
                         let instrs = compile_prog(&prog, &mut repl_env, &mut define_env_t, false, typecheck_enabled);

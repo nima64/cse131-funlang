@@ -48,6 +48,7 @@ impl TypeInfo {
 pub struct TypeEnv {
     pub vars: HashMap<String, TypeInfo>, // variable name to type
     pub funs: HashMap<String, (Vec<TypeInfo>, TypeInfo)>, // funciton name to (arg types, return type)
+    pub input_type: TypeInfo,
 }
 
 impl TypeEnv {
@@ -55,6 +56,7 @@ impl TypeEnv {
         TypeEnv {
             vars: HashMap::new(),
             funs: HashMap::new(),
+            input_type: TypeInfo::Any,
         }
     }
 

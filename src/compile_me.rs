@@ -163,7 +163,7 @@ fn compile_me_inner(
         for a in info.defn.params.iter() {
             var_map.insert(a.name.clone(), a.ann_type.clone());
         }
-        let local_env = TypeEnv { vars: var_map, funs: tenv.funs.clone() };
+    let local_env = TypeEnv { vars: var_map, funs: tenv.funs.clone(), input_type: TypeInfo::Any };
         let typed_body = annotate_expr(&info.defn.body, &local_env, &mut HashMap::new());
         let optimized_body = optimize(&typed_body, im::HashMap::new());
 
