@@ -703,7 +703,7 @@ pub fn jit_code_input(instrs: &Vec<Instr>, input: i64) -> i64 {
     }
 
     for instr in instrs {
-        println!("{}", instr_to_string(instr));
+        // println!("{}", instr_to_string(instr));
         instr_to_asm(instr, &mut ops, &labels);
     }
 

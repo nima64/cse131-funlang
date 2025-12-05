@@ -42,6 +42,10 @@ fn is_value(e: &ExprT) -> bool {
     }
 }
 
+fn i_to_val(i: i64) -> ExprT {
+    
+}
+
 pub fn optimize(e: &ExprT, env: HashMap<String, ExprT>) -> ExprT {
     match e {
         ExprT::Number(_, _) | ExprT::Boolean(_, _) => {e.clone()}
