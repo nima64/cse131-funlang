@@ -13,7 +13,7 @@ pub fn parse_expr(s: &Sexp) -> ExprT {
             if !(*n >= -2_i64.pow(62) && *n <= 2_i64.pow(62) - 1) {
                 panic!("not a valid number must be an integer between -2^62 and 2^62-1");
             }
-            ExprT::Number(tag_number(*n), TypeInfo::Any)
+            ExprT::Number(*n, TypeInfo::Any)
         }
         Sexp::Atom(S(name)) => {
             /* Check is boolean */

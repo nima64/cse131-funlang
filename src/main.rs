@@ -22,9 +22,7 @@ use crate::typechecker::*;
 use crate::optimizer::*;
 
 
-fn run_jit(in_name: &str, input_arg: &str, typecheck_enabled: bool) -> std::io::Result<()> {
-    let (input, input_type) = infer_input_type(input_arg);
-
+fn run_jit(in_name: &str, input: i64, input_type: TypeInfo, typecheck_enabled: bool) -> std::io::Result<()> {
     let mut in_file = File::open(in_name)?;
     let mut in_contents = String::new();
     in_file.read_to_string(&mut in_contents)?;
@@ -54,7 +52,7 @@ fn run_jit(in_name: &str, input_arg: &str, typecheck_enabled: bool) -> std::io::
     Ok(())
 }
 
-fn run_aot(in_name: &str, out_name: &str, typecheck_enabled: bool) -> std::io::Result<()> {
+fn run_aot(in_name: &str, out_name: &str, input_type: TypeInfo, typecheck_enabled: bool) -> std::io::Result<()> {
     let mut in_file = File::open(in_name)?;
     let mut in_contents = String::new();
     in_file.read_to_string(&mut in_contents)?;
@@ -68,7 +66,7 @@ fn run_aot(in_name: &str, out_name: &str, typecheck_enabled: bool) -> std::io::R
     let mut define_env_t = std::collections::HashMap::new();
 
     if typecheck_enabled {
-        match annotate_program(&mut prog, &mut HashMap::new(), TypeInfo::Any) {
+        match annotate_program(&mut prog, &mut HashMap::new(), input_type.clone()) {
             Ok(_) => {},
             Err(err) => {
                 eprintln!("Type Error: {}", err);
@@ -238,21 +236,23 @@ fn main() -> std::io::Result<()> {
         let in_name = &args[2];
         let out_name = &args[3];
         let input_arg = if args.len() >= 5 { &args[4] } else { "false" };
+        let (input, input_type) = infer_input_type(input_arg);
 
-        run_aot(in_name, out_name, enable_typecheck)?;
-        run_jit(in_name, input_arg, enable_typecheck)?;
+        run_aot(in_name, out_name, input_type.clone(), enable_typecheck)?;
+        run_jit(in_name, input, input_type.clone(), enable_typecheck)?;
     } else if use_jit {
         let in_name = &args[2];
         let input_arg = if args.len() >= 4 { &args[3] } else { "false" };
+        let (input, input_type) = infer_input_type(input_arg);
 
-        run_jit(in_name, input_arg, enable_typecheck)?;
+        run_jit(in_name, input, input_type.clone(), enable_typecheck)?;
     } else if use_repl {
         run_repl(enable_typecheck);
     } else if use_aot {
         let in_name = &args[2];
         let out_name = &args[3];
 
-        run_aot(in_name, out_name, enable_typecheck)?;
+        run_aot(in_name, out_name, TypeInfo::Any, enable_typecheck)?;
     } else if enable_typecheck {
         let in_name = &args[2];
         run_t(in_name)?;

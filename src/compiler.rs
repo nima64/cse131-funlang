@@ -52,7 +52,7 @@ fn compile_expr_define_env(
     }
 
     match e {
-        ExprT::Number(n, _) => vec![Instr::Mov(Reg::Rax, *n)],
+        ExprT::Number(n, _) => vec![Instr::Mov(Reg::Rax, tag_number(*n))],
         ExprT::Boolean(b, _) => vec![Instr::Mov(Reg::Rax, if *b {TRUE_TAGGED} else {FALSE_TAGGED})],
         ExprT::Id(name, _) => {
             // Check env (stack) first for local variables
